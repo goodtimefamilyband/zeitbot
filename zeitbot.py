@@ -1,5 +1,12 @@
 #sambot
 
+import sys
+if len(sys.argv) == 1:
+    print("Usage: ipython {} token".format(sys.argv[0]))
+    sys.exit()
+    
+token = sys.argv[1]
+
 import discord
 from discord.ext import commands
 import asyncio
@@ -11,12 +18,10 @@ from collections import defaultdict
 import websockets
 import aiohttp
 
-import sys
-if len(sys.argv) == 1:
-    print("Usage: ipython {} token".format(sys.argv[0]))
-    sys.exit()
-    
-token = sys.argv[1]
+react_regex = 'z/([ad])(/[ad])*'
+
+reacts = defaultdict(dict)
+react_res = {}
 
 from app.schema import Session, ScoreTbl, ScoreItem
 db_session = Session()
@@ -24,7 +29,6 @@ db_session = Session()
 def emojikey(e):
     return str(e)
 
-    
 localtz = pytz.timezone("America/New_York")
 def formatMessage(m):
     global localtz
@@ -49,6 +53,30 @@ def formatLeaderboard(name, scorecards):
     #await bot.send_message(ctx.message.channel, msg)
 
 
+class Zeitbot(commands.Bot):
+    
+    async def on_message(self, msg):
+        #print("Got message", msg.content)
+        match = react_res[msg.server.name].search(msg.content)
+        if match is not None:
+            s,e = match.span()
+            mstr = msg.content[s:e]
+            print(mstr)
+            mitems = mstr.split('/')
+            for mitem in mitems[1:]:
+                print("Checking", mitem)
+                #print(reacts)
+                if mitem in reacts[msg.server.name]:
+                    e = reacts[msg.server.name][mitem]
+                    em = discord.utils.find(lambda emo: str(emo) == e, msg.server.emojis)
+                    if em is None:
+                        em = e
+                        
+                    print("Adding", mitem)
+                    await self.add_reaction(msg, em)
+            
+        await super().on_message(msg)
+    
 class Score:
     
     def __init__(self, srecord, client):
@@ -185,7 +213,9 @@ mentions_regex = '@[^ ]*'
 mentions_re = re.compile(mentions_regex)
 ival = 60*60*24*7
 
-bot = commands.Bot(command_prefix='z>')
+#bot = commands.Bot(command_prefix='z>')
+bot = Zeitbot(command_prefix='z>')
+
 leaderboards = defaultdict(dict)
 glock = asyncio.Lock()
 busy = True
@@ -309,9 +339,11 @@ async def on_ready():
     print('Logged in as', bot.user.name)
     
     for s in bot.servers:
+        react_res[s.name] = re.compile('z/')
+    
         for score in db_session.query(ScoreTbl).filter_by(server=s.name):
             ScoreCard.scoretbl[s.name][score.name] = Score(score, bot)
-        
+                    
     
 @bot.command(pass_context=True, no_pm=True)
 async def score(ctx, cmd, name):
@@ -418,6 +450,22 @@ async def zeitgeist(ctx, *args, **kwargs):
                 await bot.send_message(ctx.message.channel, formatMessage(sc.message), embed=e)
 
     await bot.send_message(ctx.message.channel, "======= That's all =======")
+
+@bot.command(pass_context=True, no_pm=True)
+async def react(ctx, str, emoji):
+    global reacts
+    global react_res
+    '''
+    em = discord.utils.find(lambda e: str(e) == emoji, ctx.message.server.emojis)
+    if em is None:
+        await bot.send_message(ctx.message.channel, "Can't find {} on server {}...".format())
+    '''
+    
+    reacts[ctx.message.server.name][str] = emoji
+    reacts_group = "|".join(reacts[ctx.message.server.name].keys())
+    reacts_regex = "z/({})(/({}))*".format(reacts_group, reacts_group)
+    print(reacts_regex)
+    react_res[ctx.message.server.name] = re.compile(reacts_regex)
 
 '''
 @bot.command(pass_context=True, no_pm=True)
