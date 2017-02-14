@@ -207,15 +207,45 @@ async def get_busy():
     glock.release()
     return busy
 
+ws_lock = asyncio.Lock()
+ws_event = asyncio.Event()
+ws_status = discord.Status.dnd
+ws_msg = "Starting up..."
+async def get_status():
+    global ws_lock
+    global ws_status
+    global ws_msg
+    
+    await ws_lock
+    status = ws_status
+    msg = ws_msg
+    ws_lock.release()
+    return ws_msg, ws_status
+    
+async def set_status(msg, status):
+    global ws_lock
+    global ws_status
+    global ws_msg
+
+    await ws_lock
+    ws_status = status
+    ws_msg = msg
+    ws_lock.release()
+
+ws_state = True
 async def compute_leaderboard():
+    global ws_event
+    
     await bot.wait_until_ready()
     status = discord.Status.dnd
+    await set_status("Starting up...", status)
     await bot.change_presence(game=discord.Game(name="Starting up...", url='', type=0), status=status)
     for server in bot.servers:
         for channel in server.channels:
             leaderboards[server][channel] = LeaderBoard()
             
     while not bot.is_closed:
+        ws_event.set()
         try:
             t = datetime.fromtimestamp(time.time() - ival)
             for server in bot.servers:
@@ -223,14 +253,16 @@ async def compute_leaderboard():
                     try:
                         scorecards = []
                         
-                        await bot.change_presence(game=discord.Game(name=channel.name, url='', type=0), status=status)
+                        #await bot.change_presence(game=discord.Game(name=channel.name, url='', type=0), status=status)
+                        await set_status(channel.name, status)
                         async for m in bot.logs_from(channel, after=t, limit=100000):
                             scorecards.append(ScoreCard(m))
                         
                         print("Got {} scorecards for {}".format(len(scorecards), channel.name))
                         tempboard = {}
                         for score in ScoreCard.scoretbl[server.name].keys():
-                            await bot.change_presence(game=discord.Game(name=score, url='', type=0), status=status)
+                            #await bot.change_presence(game=discord.Game(name=score, url='', type=0), status=status)
+                            await set_status(score, status)
                             slist = [sc for sc in scorecards if score in sc.scores]
                             tempboard[score] = sorted(slist, key=lambda sc: sc.scores[score], reverse=True)[:10]
                             
@@ -240,21 +272,37 @@ async def compute_leaderboard():
                     
             await set_busy(False)
             status = discord.Status.online
-            await bot.change_presence(game=discord.Game(name="Use z>help", url='', type=0), status=status)
+            #await bot.change_presence(game=discord.Game(name="Use z>help", url='', type=0), status=status)
+            await set_status("Use z>help", status)
             
             # Do it again to update status text?
             # await bot.change_presence(game=discord.Game(name="Use z>help", url='', type=0), status=status)
             
             
-        except websockets.exceptions.ConnectionClosed as ex:
-            print(ex)
         except aiohttp.errors.ServerDisconnectedError as ex:
             print(ex)
         except aiohttp.errors.ClientResponseError as ex:
             print(ex)
-            
+        
+        ws_event.clear()
         await asyncio.sleep(300)
-                
+
+
+async def ws_coro():
+    global ws_event
+    
+    await bot.wait_until_ready()
+    while True:
+        try:
+            msg, status = await get_status()
+            await bot.change_presence(game=discord.Game(name=msg, url='', type=0), status=status)
+        except websockets.exceptions.ConnectionClosed as ex:
+            print(ex)
+            
+        await ws_event.wait()
+        await asyncio.sleep(15)
+        
+        
 
 @bot.event
 async def on_ready():
@@ -395,4 +443,5 @@ async def help(ctx, *args, **kwargs):
     await bot.send_message(ctx.message.author, h)
 '''                
 bot.loop.create_task(compute_leaderboard())
+bot.loop.create_task(ws_coro())
 bot.run(token)
