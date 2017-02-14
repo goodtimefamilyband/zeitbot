@@ -250,6 +250,8 @@ async def compute_leaderboard():
             print(ex)
         except aiohttp.errors.ServerDisconnectedError as ex:
             print(ex)
+        except aiohttp.errors.ClientResponseError as ex:
+            print(ex)
             
         await asyncio.sleep(300)
                 
