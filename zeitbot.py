@@ -242,24 +242,21 @@ ws_event = asyncio.Event()
 ws_status = discord.Status.dnd
 ws_msg = "Starting up..."
 async def get_status():
-    global ws_lock
     global ws_status
     global ws_msg
     
-    await ws_lock
-    status = ws_status
-    msg = ws_msg
-    ws_lock.release()
     return ws_msg, ws_status
     
 async def set_status(msg, status):
     global ws_lock
     global ws_status
     global ws_msg
+    global ws_event
 
     await ws_lock
     ws_status = status
     ws_msg = msg
+    ws_event.set()
     ws_lock.release()
 
 ws_state = True
@@ -269,13 +266,12 @@ async def compute_leaderboard():
     await bot.wait_until_ready()
     status = discord.Status.dnd
     await set_status("Starting up...", status)
-    await bot.change_presence(game=discord.Game(name="Starting up...", url='', type=0), status=status)
+    # await bot.change_presence(game=discord.Game(name="Starting up...", url='', type=0), status=status)
     for server in bot.servers:
         for channel in server.channels:
             leaderboards[server][channel] = LeaderBoard()
             
     while not bot.is_closed:
-        ws_event.set()
         try:
             t = datetime.fromtimestamp(time.time() - ival)
             for server in bot.servers:
@@ -314,22 +310,25 @@ async def compute_leaderboard():
         except aiohttp.errors.ClientResponseError as ex:
             print(ex)
         
-        ws_event.clear()
+        #ws_event.clear()
         await asyncio.sleep(300)
 
 
 async def ws_coro():
     global ws_event
+    global ws_lock
     
     await bot.wait_until_ready()
-    while True:
+    while await ws_event.wait():
+        await ws_lock
         try:
             msg, status = await get_status()
             await bot.change_presence(game=discord.Game(name=msg, url='', type=0), status=status)
         except websockets.exceptions.ConnectionClosed as ex:
             print(ex)
             
-        await ws_event.wait()
+        ws_event.clear()
+        ws_lock.release()
         await asyncio.sleep(15)
         
         
