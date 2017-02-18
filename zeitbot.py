@@ -23,7 +23,7 @@ react_regex = 'z/([ad])(/[ad])*'
 reacts = defaultdict(dict)
 react_res = {}
 
-from app.schema import Session, ScoreTbl, ScoreItem
+from app.schema import Session, ScoreTbl, ScoreItem, Reaction
 db_session = Session()
 
 def emojikey(e):
@@ -52,29 +52,47 @@ def formatLeaderboard(name, scorecards):
     return msg        
     #await bot.send_message(ctx.message.channel, msg)
 
+def getEmojiObj(server, emoji):
+    e = discord.utils.find(lambda emo: str(emo) == emoji, server.emojis)
+    if e is None:
+        return emoji
+    return e
 
 class Zeitbot(commands.Bot):
     
     async def on_message(self, msg):
         #print("Got message", msg.content)
-        match = react_res[msg.server.name].search(msg.content)
+        match = reacts[msg.server.name].reactre.search(msg.content)
         if match is not None:
             s,e = match.span()
             mstr = msg.content[s:e]
             print(mstr)
             mitems = mstr.split('/')
+            emojis = []
             for mitem in mitems[1:]:
                 print("Checking", mitem)
                 #print(reacts)
-                if mitem in reacts[msg.server.name]:
+                if mitem in ScoreCard.scoretbl[msg.server.name]:
+                    for si in ScoreCard.scoretbl[msg.server.name][mitem].emojis.values():
+                        emojis.append(getEmojiObj(msg.server, si.emoji))
+                elif mitem in reacts[msg.server.name]:
+                    print(mitem)
                     e = reacts[msg.server.name][mitem]
+                    em = getEmojiObj(msg.server, e)
+                    '''
                     em = discord.utils.find(lambda emo: str(emo) == e, msg.server.emojis)
                     if em is None:
                         em = e
+                    '''
                         
                     print("Adding", mitem)
-                    await self.add_reaction(msg, em)
+                    #await self.add_reaction(msg, em)
+                    emojis.append(em)
+                
             
+            for emoji in emojis:
+                await self.add_reaction(msg, emoji)
+                
         await super().on_message(msg)
     
 class Score:
@@ -160,6 +178,7 @@ class ScoreCommands:
             print("Saving")
             #print(s.save)
             await s.save()
+            reacts[ctx.message.server.name].addOther(name)
             return True
         
         return False
@@ -208,6 +227,68 @@ class LeaderBoard:
         lb = self.leaderboard
         self.lock.release()
         return lb
+        
+class Reactions:
+
+    prefix = 'r'
+    sep = '/'
+    addtl = 'scores'
+
+    def __init__(self, servername, dbsesh, **kwargs):
+        self.dbsesh = dbsesh
+        self.server = servername
+        self.reactdict = {}
+        for r in self.dbsesh.query(Reaction).filter_by(server=servername):
+            self.reactdict[r.shortcut] = r
+            
+        self.other_shortcuts = []
+        if Reactions.addtl in kwargs:
+            self.other_shortcuts = list(kwargs[Reactions.addtl])
+            
+        self.setRe()
+            
+    def setRe(self):
+        reacts_group = "|".join(list(self.reactdict) + self.other_shortcuts)
+        reacts_regex = Reactions.prefix + Reactions.sep + "({})({}({}))*".format(reacts_group, Reactions.sep, reacts_group)
+        self.reactre = re.compile(reacts_regex)
+        
+    def addOther(self, other):
+        self.other_shortcuts.append(other)
+        self.setRe()
+            
+    def __getitem__(self, i):
+        return self.reactdict[i].emoji
+        
+    def __setitem__(self, i, x):
+        if not i in self.reactdict:
+            self.reactdict[i] = Reaction(shortcut=i, server=self.server)
+    
+        self.reactdict[i].emoji = x
+        self.setRe()
+        
+    def __iter__(self):
+        return iter(list(self.reactdict) + self.other_shortcuts)
+        
+    '''
+    def __next__(self):
+        print('__next__')
+        return next(self.reactdict)
+    '''
+        
+    def items(self):
+        return [(s,r.emoji) for s,r in self.reactdict.items()]
+        
+    def save(self, *args):
+        keys = args
+        if len(keys) == 0:
+            keys = self.reactdict.keys()
+            
+        for k in keys:
+            self.dbsesh.add(self.reactdict[k])
+            
+        self.dbsesh.commit()
+        
+        
 
 mentions_regex = '@[^ ]*'
 mentions_re = re.compile(mentions_regex)
@@ -331,17 +412,17 @@ async def ws_coro():
         ws_lock.release()
         await asyncio.sleep(15)
         
-        
-
 @bot.event
 async def on_ready():
     print('Logged in as', bot.user.name)
     
     for s in bot.servers:
-        react_res[s.name] = re.compile('z/')
+        #react_res[s.name] = re.compile('z/')
     
         for score in db_session.query(ScoreTbl).filter_by(server=s.name):
             ScoreCard.scoretbl[s.name][score.name] = Score(score, bot)
+            
+        reacts[s.name] = Reactions(s.name, db_session, scores=list(ScoreCard.scoretbl[s.name]))
                     
     
 @bot.command(pass_context=True, no_pm=True)
@@ -459,13 +540,31 @@ async def react(ctx, str, emoji):
     if em is None:
         await bot.send_message(ctx.message.channel, "Can't find {} on server {}...".format())
     '''
+    is_admin = ctx.message.server.default_channel.permissions_for(ctx.message.author).administrator
+    if not is_admin:
+        await bot.send_message(ctx.message.channel, "Sorry, you're not allowed to use this command")
     
     reacts[ctx.message.server.name][str] = emoji
+    reacts[ctx.message.server.name].save()
+    '''
     reacts_group = "|".join(reacts[ctx.message.server.name].keys())
-    reacts_regex = "z/({})(/({}))*".format(reacts_group, reacts_group)
-    print(reacts_regex)
-    react_res[ctx.message.server.name] = re.compile(reacts_regex)
+    reacts_regex = "r/({})(/({}))*".format(reacts_group, reacts_group)
+    '''
+    print(reacts[ctx.message.server.name].reactre)
+    #react_res[ctx.message.server.name] = re.compile(reacts_regex)
+    await bot.send_message(ctx.message.channel, "Reaction added")
 
+@bot.command(pass_context=True, no_pm=False)
+async def reactions(ctx):
+    '''View a list of auto-reactions.
+    
+    To use auto reactions, include the string r/react1/react2/.../reactn anywhere in your message, where react1, react2, ..., reactn are the strings on the right in the response to this command.
+    You can also use the names of scores. If you do, all the emojis in that score will be used in auto-reactions to your message.
+    '''
+    global reacts
+    
+    msg = "\n".join(["{} {}".format(r.emoji, str) for (str, r) in reacts[ctx.message.server.name].reactdict.items()])
+    await bot.send_message(ctx.message.channel, "-------\n" + msg)
 '''
 @bot.command(pass_context=True, no_pm=True)
 async def help(ctx, *args, **kwargs):
