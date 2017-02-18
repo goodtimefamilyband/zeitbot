@@ -29,5 +29,13 @@ class ScoreItem(Base):
     emoji = Column(String, primary_key=True)
     score = Column(Integer, primary_key=True)
     val = Column(Float, nullable=False, default=1.0)
+    
+class Reaction(Base):
+    __tablename__ = "reactions"
+    
+    shortcut = Column(String, primary_key=True)
+    server = Column(String, primary_key=True)
+    emoji = Column(String, nullable=False)
+    
         
 Base.metadata.create_all(engine)
