@@ -390,6 +390,8 @@ async def compute_leaderboard():
             print(ex)
         except aiohttp.errors.ClientResponseError as ex:
             print(ex)
+        except discord.errors.HTTPException as ex:
+            print(ex)
         
         #ws_event.clear()
         await asyncio.sleep(300)
