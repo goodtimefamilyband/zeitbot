@@ -58,7 +58,139 @@ def getEmojiObj(server, emoji):
         return emoji
     return e
 
+class ChannelMeta:
+    def __init__(self, channel, client)
+        self.channel = channel
+        self.client = client
+        
+        self.busy = True
+        self.busylock = asyncio.Lock()
+        
+        self.leaderboard = LeaderBoard()
+        
+    async def set_busy(self, val):
+        await self.busylock
+        busy = val
+        self.busylock.release()
+        
+    async def get_busy():
+        await self.busylock
+        val = self.busy
+        self.busylock.release()
+        return val
+    
+    async def update(self):
+        try:
+            scorecards = []
+            t = datetime.fromtimestamp(time.time() - self.client.msg_ival)
+            
+            await self.client.set_status(self.channel.name, status)
+            async for m in self.client.logs_from(self.channel, after=t, limit=100000):
+                scorecards.append(ScoreCard(m))
+            
+            print("Got {} scorecards for {}".format(len(scorecards), self.channel.name))
+            tempboard = {}
+            for score in client.servermetas[self.channel.server.name].scoretbl.keys():
+                await self.client.set_status(score, status)
+                slist = [sc for sc in scorecards if score in sc.scores]
+                tempboard[score] = sorted(slist, key=lambda sc: sc.scores[score], reverse=True)[:10]
+                
+            await self.leaderboard.setLB(tempboard)
+        except discord.errors.Forbidden as ex:
+            print("{}: Can't access {} on {}".format(ex, self.channel.name, self.channel.server.name))
+    
+class ServerMeta:
+    
+    def __init__(self, server, db, client):
+        self.server = server
+        self.db = db
+        self.client = client
+        
+        self.scoretbl = {}
+        
+        for score in self.db.query(ScoreTbl).filter_by(server=s.name):
+            self.scoretbl[score.name] = Score(score, client)
+        
+        self.reactions = Reactions(self.server.name, db, scores=list(self.scoretbl))
+        
+        self.channelmetas = {}
+        for channel in self.server.channels:
+            self.channelmetas[channel.name] = ChannelMeta(channel, client)
+            
+    async def cycle(self):
+        await self.update()
+        
+        for cmeta in self.channelmetas.items():
+            await cmeta.update()
+            
+    async def update(self):
+        pass
+    
+'''
+TODO: Channel-level busy locks?
+'''
 class Zeitbot(commands.Bot):
+    
+    def __init__(self, *args, db, wait_interval=300, message_interval=604800, **kwargs):
+        super().__init__(*args, **kwargs)
+        
+        self.wait_ival = wait_interval
+        self.msg_ival = message_interval
+        
+        self.ws_lock = asyncio.Lock()
+        self.ws_event = asyncio.Event()
+        self.ws_status = discord.Status.dnd
+        self.ws_msg = "Starting up..."
+        
+        self.loop.create_task(self.ws_coro())
+        
+        self.servermetas = {}
+        for server in self.servers:
+            self.servermetas[server.name] = ServerMeta(server, db, self)
+            
+        self.loop.create_task(self.bg_loop())
+        
+    async def ws_coro(self):
+        await self.wait_until_ready()
+        while await self.ws_event.wait():
+            await self.ws_lock
+            try:
+                await self.change_presence(game=discord.Game(name=self.ws_msg, url='', type=0), status=self.ws_status)
+            except websockets.exceptions.ConnectionClosed as ex:
+                print(ex)
+                
+            self.ws_event.clear()
+            self.ws_lock.release()
+            await asyncio.sleep(15)
+    
+    # Enforces websocket rate limiting
+    async def set_status(self, msg, status):
+        await self.ws_lock
+        self.ws_status = status
+        self.ws_msg = msg
+        self.ws_event.set()
+        self.ws_lock.release()
+        
+    async def bg_loop(self):
+        await self.wait_until_ready()        
+        while not self.is_closed:
+            try:
+                for sm in self.servermetas.items():
+                    await sm.cycle()
+                        
+                await set_busy(False)
+                status = discord.Status.online
+                await set_status("Use z>help", status)
+                
+            except aiohttp.errors.ServerDisconnectedError as ex:
+                print(ex)
+            except aiohttp.errors.ClientResponseError as ex:
+                print(ex)
+            except discord.errors.HTTPException as ex:
+                print(ex)
+            
+            await asyncio.sleep(self.wait_ival)
+        
     
     async def on_message(self, msg):
         #print("Got message", msg.content)
@@ -94,6 +226,7 @@ class Zeitbot(commands.Bot):
                 await self.add_reaction(msg, emoji)
                 
         await super().on_message(msg)
+
     
 class Score:
     
@@ -298,49 +431,7 @@ ival = 60*60*24*7
 bot = Zeitbot(command_prefix='z>')
 
 leaderboards = defaultdict(dict)
-glock = asyncio.Lock()
-busy = True
 
-async def set_busy(val):
-    global glock
-    global busy
-
-    await glock
-    busy = val
-    glock.release()
-    
-async def get_busy():
-    global glock
-    global busy
-
-    await glock
-    val = busy
-    glock.release()
-    return busy
-
-ws_lock = asyncio.Lock()
-ws_event = asyncio.Event()
-ws_status = discord.Status.dnd
-ws_msg = "Starting up..."
-async def get_status():
-    global ws_status
-    global ws_msg
-    
-    return ws_msg, ws_status
-    
-async def set_status(msg, status):
-    global ws_lock
-    global ws_status
-    global ws_msg
-    global ws_event
-
-    await ws_lock
-    ws_status = status
-    ws_msg = msg
-    ws_event.set()
-    ws_lock.release()
-
-ws_state = True
 async def compute_leaderboard():
     global ws_event
     
