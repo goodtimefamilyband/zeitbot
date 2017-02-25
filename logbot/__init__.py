@@ -1,20 +1,10 @@
 #logbot.py
 
-import sys
-if len(sys.argv) == 1:
-    print("Usage: ipython {} token".format(sys.argv[0]))
-    sys.exit()
-    
-token = sys.argv[1]
-
 import discord
 from discord.ext import commands
 import asyncio
-import re
 from datetime import datetime, tzinfo
 import time
-import pytz
-from collections import defaultdict
 import websockets
 import aiohttp
 
@@ -43,11 +33,15 @@ class Logger:
         
     def set_client(self, client):
         self.client = client
+        self.register_commands()
         
+    #TODO: turn this into a decorator?
+    def register_commands(self):
+        pass
 
 class Logbot(commands.Bot):
     
-    def __init__(self, *args, db=None, wait_interval=300, message_interval=604800, **kwargs):
+    def __init__(self, *args, wait_interval=300, message_interval=604800, **kwargs):
         super().__init__(*args, **kwargs)
         
         self.wait_ival = wait_interval
@@ -101,7 +95,7 @@ class Logbot(commands.Bot):
                             l.before_channel_update(channel)
                             
                         t = datetime.fromtimestamp(time.time() - self.msg_ival)
-                        async for m in bot.logs_from(channel, after=t, limit=100000):
+                        async for m in self.logs_from(channel, after=t, limit=100000):
                             for l in self.loggers:
                                 l.process_message(m)
                         
@@ -113,14 +107,7 @@ class Logbot(commands.Bot):
                         
                 for l in self.loggers:
                     l.after_update()
-                '''
-                for sm in self.servermetas.items():
-                    await sm.cycle()
-                        
-                await set_busy(False)
-                status = discord.Status.online
-                await set_status("Use z>help", status)
-                '''
+                
             except aiohttp.errors.ServerDisconnectedError as ex:
                 print(ex)
             except aiohttp.errors.ClientResponseError as ex:
@@ -135,60 +122,15 @@ class Logbot(commands.Bot):
             raise RuntimeError('Decorated class is not a Logger')
                 
         loggerInstance.set_client(self)
+        
         self.loggers.append(loggerInstance)
     
     def logger(self, loggerCls):
         '''Class decorator for loggers'''
-        print("logger", type(loggerCls))
         
         def decorator(*args, **kwargs):
-            print("decorator", args, kwargs)
-            #print("loggerInstance", loggerInstance)
             loggerInstance = loggerCls(*args, **kwargs)
             self.add_logger(loggerInstance)
             return loggerInstance
             
         return decorator
-        
-bot = Logbot(command_prefix='z>')
-
-@bot.logger
-class SimpleLogger(Logger):
-
-    def __init__(self, foo, bar):
-        print("__init__", foo, bar)
-
-    def before_update(self):
-        print("before_update")
-
-    def before_server_update(self, server):
-        print("before_server_update")
-
-    def before_channel_update(self, channel):
-        print("before_channel_update")
-
-    def process_message(self, msg):
-        print("process_message")
-        
-    def after_channel_update(self, channel):
-        print("after_channel_update")
-        
-    def after_server_update(self, server):
-        print("after_server_update")
-        
-    def after_update(self):
-        print("after_update")
-        
-    @bot.command(pass_context=True, no_pm=True)
-    async def test(self, *args, **kwargs):
-        print("test", args, kwargs)
-
-print("instantiating")
-sl = SimpleLogger("baz", "blee")
-print("instance", sl)
-
-@bot.event
-async def on_ready():
-    print('Logged in as', bot.user.name)        
-        
-bot.run(token)
