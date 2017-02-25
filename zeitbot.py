@@ -58,6 +58,43 @@ def getEmojiObj(server, emoji):
         return emoji
     return e
 
+class ChannelContainer:
+
+    def __init__(self):
+        self.container = defaultdict(dict)
+        
+    # TODO: Use server ID instead
+    def __getitem__(self, channel):
+        return self.container[channel.server.name][channel.id]
+        
+    def __setitem__(self, channel, val):
+        self.container[channel.server.name][channel.id] = val
+    
+class Logger:
+
+    def before_update(self):
+        pass
+
+    def before_server_update(self, server):
+        pass
+
+    def before_channel_update(self, channel):
+        pass
+
+    def process_message(self, msg):
+        pass
+        
+    def after_channel_update(self, channel)
+        pass
+        
+    def after_update(self):
+        pass
+        
+    def set_client(self, client):
+        self.client = client
+        
+
+    
 class ChannelMeta:
     def __init__(self, channel, client)
         self.channel = channel
@@ -144,10 +181,12 @@ class Zeitbot(commands.Bot):
         
         self.loop.create_task(self.ws_coro())
         
+        '''
         self.servermetas = {}
         for server in self.servers:
             self.servermetas[server.name] = ServerMeta(server, db, self)
-            
+        '''
+        self.loggers = []
         self.loop.create_task(self.bg_loop())
         
     async def ws_coro(self):
@@ -175,13 +214,39 @@ class Zeitbot(commands.Bot):
         await self.wait_until_ready()        
         while not self.is_closed:
             try:
+                for l in loggers:
+                    l.before_update()
+                    
+                for server in self.servers:
+                    
+                    for l in loggers:
+                        l.before_server_update(server)
+                        
+                    for channel in server.channels:
+                        for l in loggers:
+                            l.before_channel_update(channel)
+                            
+                        t = datetime.fromtimestamp(time.time() - self.client.msg_ival)
+                        async for m in bot.logs_from(channel, after=t, limit=100000):
+                            for l in loggers:
+                                l.process_message(m)
+                        
+                        for l in loggers:
+                            l.after_channel_update(channel)    
+                            
+                    for l in loggers:
+                        l.after_server_update(server)
+                        
+                for l in loggers:
+                    l.after_update()
+            '''
                 for sm in self.servermetas.items():
                     await sm.cycle()
                         
                 await set_busy(False)
                 status = discord.Status.online
                 await set_status("Use z>help", status)
-                
+            '''    
             except aiohttp.errors.ServerDisconnectedError as ex:
                 print(ex)
             except aiohttp.errors.ClientResponseError as ex:
@@ -190,7 +255,19 @@ class Zeitbot(commands.Bot):
                 print(ex)
             
             await asyncio.sleep(self.wait_ival)
+
+    async def logger(self):
+        '''Class decorator for loggers'''
         
+        def decorator(l):
+            if not isinstance(l, Logger):
+                raise RuntimeError('Decorated class is not a Logger')
+                
+            l.set_client(self)
+            self.loggers.append(l)
+            
+        return decorator
+            
     
     async def on_message(self, msg):
         #print("Got message", msg.content)
@@ -487,6 +564,7 @@ async def compute_leaderboard():
         #ws_event.clear()
         await asyncio.sleep(300)
 
+        
 
 async def ws_coro():
     global ws_event
