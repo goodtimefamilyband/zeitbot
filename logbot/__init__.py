@@ -16,19 +16,19 @@ class Logger:
     def before_server_update(self, server):
         pass
 
-    def before_channel_update(self, channel):
+    async def before_channel_update(self, channel):
         pass
 
     def process_message(self, msg):
         pass
         
-    def after_channel_update(self, channel):
+    async def after_channel_update(self, channel):
         pass
 
     def after_server_update(self, server):
         pass
     
-    def after_update(self):
+    async def after_update(self):
         pass
         
     def set_client(self, client):
@@ -92,7 +92,7 @@ class Logbot(commands.Bot):
                         
                     for channel in server.channels:
                         for l in self.loggers:
-                            l.before_channel_update(channel)
+                            await l.before_channel_update(channel)
                             
                         t = datetime.fromtimestamp(time.time() - self.msg_ival)
                         async for m in self.logs_from(channel, after=t, limit=100000):
@@ -100,13 +100,13 @@ class Logbot(commands.Bot):
                                 l.process_message(m)
                         
                         for l in self.loggers:
-                            l.after_channel_update(channel)    
+                            await l.after_channel_update(channel)    
                             
                     for l in self.loggers:
                         l.after_server_update(server)
                         
                 for l in self.loggers:
-                    l.after_update()
+                    await l.after_update()
                 
             except aiohttp.errors.ServerDisconnectedError as ex:
                 print(ex)
@@ -119,7 +119,7 @@ class Logbot(commands.Bot):
 
     def add_logger(self, loggerInstance):
         if not issubclass(type(loggerInstance), Logger):
-            raise RuntimeError('Decorated class is not a Logger')
+            raise RuntimeError('Attempt to add logger that does not subclass logbot.Logger')
                 
         loggerInstance.set_client(self)
         
