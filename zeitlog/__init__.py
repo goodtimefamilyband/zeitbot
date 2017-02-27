@@ -86,7 +86,7 @@ class Zeitlog(logbot.Logger):
         async def on_message(msg):
             #print("Got message", msg.content)
             
-            if msg.author.id == client.user.id:
+            if msg.author.id == self.client.user.id:
                 return
             
             match = self.reacts[msg.server.name].reactre.search(msg.content)
