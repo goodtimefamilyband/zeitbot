@@ -93,11 +93,15 @@ class Logbot(commands.Bot):
                     for channel in server.channels:
                         for l in self.loggers:
                             await l.before_channel_update(channel)
-                            
-                        t = datetime.fromtimestamp(time.time() - self.msg_ival)
-                        async for m in self.logs_from(channel, after=t, limit=100000):
-                            for l in self.loggers:
-                                l.process_message(m)
+                        
+                        try:
+                            t = datetime.fromtimestamp(time.time() - self.msg_ival)
+                            async for m in self.logs_from(channel, after=t, limit=100000):
+                                for l in self.loggers:
+                                    l.process_message(m)
+                                    
+                        except discord.errors.Forbidden as ex:
+                            print("{}: Can't access {} on {}".format(ex, channel.name, server.name))
                         
                         for l in self.loggers:
                             await l.after_channel_update(channel)    
