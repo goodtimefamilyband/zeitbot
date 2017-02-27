@@ -46,13 +46,33 @@ class SimpleLogger(Logger):
             print(self, ctx)
             print("test", args, kwargs)
         
-        async def test2(logger, ctx, *args, **kwargs):
-            print(logger, ctx)
-            print("test2")
+        
+            
+    def command(self, *args, **kwargs):
+        def decorator(func):
+            self.client.command(*args, name=func.__name__, **kwargs)(async_partial(func, self, *args, **kwargs))
+            
+        return decorator
+            
+def async_partial(f, *oargs, **okwargs):
+    async def inner(*args, **kwargs):
+        newkwargs = okwargs.copy()
+        newkwargs.update(kwargs)
+        return await f(*oargs, *args, **kwargs)
+        
+    inner.func = f
+    inner.args = oargs
+    inner.keywords = okwargs
+    return inner
 
 print("instantiating")
 sl = SimpleLogger("baz", "blee")
 print("instance", sl)
+
+@sl.command(pass_context=True, no_pm=True)
+async def test2(logger, ctx, *args, **kwargs):
+    print(logger, ctx)
+    print("test2", args, kwargs)
 
 @bot.event
 async def on_ready():
