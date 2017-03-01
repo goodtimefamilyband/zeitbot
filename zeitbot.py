@@ -9,9 +9,11 @@ token = sys.argv[1]
 
 from app import bot
 from zeitlog import Zeitlog
+from heartbeat import Graphlog
 
 from app.schema import Session
 db_session = Session()
 
 zlogger = Zeitlog(db_session)
+glogger = Graphlog('graphs')
 bot.run(token)
