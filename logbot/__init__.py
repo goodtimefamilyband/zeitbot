@@ -19,6 +19,9 @@ class Logger:
     async def before_channel_update(self, channel):
         pass
 
+    def channel_update_starttime(self, channel, starttime):
+        pass
+        
     def process_message(self, msg):
         pass
         
@@ -96,6 +99,9 @@ class Logbot(commands.Bot):
                         
                         try:
                             t = datetime.fromtimestamp(time.time() - self.msg_ival)
+                            for l in self.loggers:
+                                l.channel_update_starttime(channel, t)
+                            
                             async for m in self.logs_from(channel, after=t, limit=100000):
                                 for l in self.loggers:
                                     l.process_message(m)
