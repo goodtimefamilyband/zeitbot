@@ -102,16 +102,15 @@ class Graphlog(logbot.Logger):
         print(drawn)
         if not drawn or not os.path.isfile(ppath):
 
-            b0, st0, d0 = attribs[0]
-        
-            dates = mdates.drange(datetime.fromtimestamp(st0), datetime.fromtimestamp(st0 + 3600*24*7), timedelta(hours=1))
+            #b0, st0, d0 = attribs[0]
             
             plt.figure(figsize=(20,10))
             for channel in channels:
-                buckets, starttime, drawn = self.counts[channel]
+                buckets, st0, drawn = self.counts[channel]
+                dates = mdates.drange(datetime.fromtimestamp(st0), datetime.fromtimestamp(st0 + 3600*24*7), timedelta(hours=1))
                 print("buckets", buckets)
                 plt.plot_date(dates, buckets, fmt='-')
-                self.counts[channel] = (buckets, starttime, True)
+                self.counts[channel] = (buckets, st0, True)
                 
             plt.legend(cnames, loc='upper right')
             plt.savefig(ppath, bbox_inches='tight')
