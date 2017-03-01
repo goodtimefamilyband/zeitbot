@@ -6,7 +6,7 @@ import discord
 from discord.ext import commands
 import asyncio
 import re
-from datetime import datetime, tzinfo
+from datetime import datetime, tzinfo, timedelta
 import time
 import pytz
 from collections import defaultdict
@@ -50,17 +50,17 @@ class Graphlog(logbot.Logger):
             return
         
         messages = self.messages[channel]
-        print(len(messages))
+        #print(len(messages))
         starttime = self.starttimes[channel].timestamp()
         endtime = time.time()
         delta = endtime - starttime
         
-        print(starttime, endtime)
-        print(delta, int(delta))
+        #print(starttime, endtime)
+        #print(delta, int(delta))
         
         #r = pd.date_range(starttime, periods=24*7, freq='H')
         buckets = [0] * (int(delta/3600))
-        print(len(buckets))
+        #print(len(buckets))
         for m in messages:
             aware_tz = pytz.utc.localize(m.timestamp)
             
@@ -77,14 +77,43 @@ class Graphlog(logbot.Logger):
         
         buckets, starttime, drawn = self.counts[channel]
         ppath = os.path.join(self.path, channel.server.name, channel.name + '.png')
-        if not drawn and not os.path.isfile(ppath):        
+        if not drawn or not os.path.isfile(ppath):        
             dates = []
             for i in range(len(buckets)):
                 tstamp = starttime + (3600 * i)
                 dates.append(datetime.fromtimestamp(tstamp))
             
             plt.figure(figsize=(20,10))
-            plt.plot_date(x=dates, y=buckets, fmt="r-")
+            plt.plot_date(x=dates, y=buckets, fmt="-")
+            plt.savefig(ppath, bbox_inches='tight')
+            self.counts[channel] = (buckets, starttime, True)
+            
+        return ppath
+        
+    def get_plots(self, channels):
+        
+        channels.sort(key=lambda c : c.name)
+        cnames = [c.name for c in channels]
+        fname = '_'.join(cnames) + '.png'
+        ppath = os.path.join(self.path, channels[0].server.name, fname)
+        attribs = [self.counts[channel] for channel in channels]
+        print("attribs", attribs)
+        drawn = all([d for (buckets, starttime, d) in attribs])
+        print(drawn)
+        if not drawn or not os.path.isfile(ppath):
+
+            b0, st0, d0 = attribs[0]
+        
+            dates = mdates.drange(datetime.fromtimestamp(st0), datetime.fromtimestamp(st0 + 3600*24*7), timedelta(hours=1))
+            
+            plt.figure(figsize=(20,10))
+            for channel in channels:
+                buckets, starttime, drawn = self.counts[channel]
+                print("buckets", buckets)
+                plt.plot_date(dates, buckets, fmt='-')
+                self.counts[channel] = (buckets, starttime, True)
+                
+            plt.legend(cnames, loc='upper right')
             plt.savefig(ppath, bbox_inches='tight')
             
         return ppath
@@ -103,7 +132,10 @@ class Graphlog(logbot.Logger):
         async def heartbeat(ctx, *args, **kwargs):
             """Display a graph of user activity.
             """
-            path = self.get_plot(ctx.message.channel)
+            if len(ctx.message.channel_mentions) == 0:
+                path = self.get_plot(ctx.message.channel)
+            else:
+                path = self.get_plots(ctx.message.channel_mentions)
             print(path)
             with open(path, 'rb') as f:
                 await self.client.send_file(ctx.message.channel, f)
