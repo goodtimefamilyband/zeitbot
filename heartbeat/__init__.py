@@ -62,20 +62,16 @@ class Graphlog(logbot.Logger):
         buckets = [0] * (int(delta/3600))
         print(len(buckets))
         for m in messages:
-            print(m.timestamp)
-            
             aware_tz = pytz.utc.localize(m.timestamp)
             
             mdelta = aware_tz.timestamp() - starttime
-            print("mdelta", mdelta)
             bucket = int(mdelta / 3600)
-            print(bucket)
             buckets[bucket] += 1
         
         self.counts[channel] = (buckets, starttime, False)
         
     async def after_update(self):
-        print("Done")
+        print("Heartbeat done")
     
     def get_plot(self, channel):
         
