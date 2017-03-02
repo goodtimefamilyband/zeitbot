@@ -66,7 +66,11 @@ class Graphlog(logbot.Logger):
             
             mdelta = aware_tz.timestamp() - starttime
             bucket = int(mdelta / 3600)
-            buckets[bucket] += 1
+                
+            try:
+                buckets[bucket] += 1
+            except IndexError:
+                print("Tried to fill bucket {} when there are only {}".format(bucket, len(buckets)))
         
         self.counts[channel] = (buckets, starttime, False)
         
