@@ -35,6 +35,8 @@ class Graphlog(logbot.Logger):
         self.messages = ChannelContainer()
         self.starttimes = ChannelContainer()
         self.counts = ChannelContainer()
+        
+        self.channellocks = ChannelContainer()
     
     async def before_channel_update(self, channel):
         self.messages[channel] = []
@@ -50,17 +52,11 @@ class Graphlog(logbot.Logger):
             return
         
         messages = self.messages[channel]
-        #print(len(messages))
         starttime = self.starttimes[channel].timestamp()
         endtime = time.time()
         delta = endtime - starttime
         
-        #print(starttime, endtime)
-        #print(delta, int(delta))
-        
-        #r = pd.date_range(starttime, periods=24*7, freq='H')
         buckets = [0] * (int(delta/3600))
-        #print(len(buckets))
         for m in messages:
             aware_tz = pytz.utc.localize(m.timestamp)
             
@@ -72,15 +68,18 @@ class Graphlog(logbot.Logger):
             except IndexError:
                 print("Tried to fill bucket {} when there are only {}".format(bucket, len(buckets)))
         
+        await self.channellocks[channel]
         self.counts[channel] = (buckets, starttime, False)
+        self.channellocks[channel].release()
         
     async def after_update(self):
         print("Heartbeat done")
     
-    def get_plot(self, channel):
+    async def get_plot(self, channel):
         
-        buckets, starttime, drawn = self.counts[channel]
         ppath = os.path.join(self.path, channel.server.name, channel.name + '.png')
+        
+        await self.channellocks[channel]
         if not drawn or not os.path.isfile(ppath):        
             dates = []
             for i in range(len(buckets)):
@@ -88,10 +87,12 @@ class Graphlog(logbot.Logger):
                 dates.append(datetime.fromtimestamp(tstamp))
             
             plt.figure(figsize=(20,10))
+            buckets, starttime, drawn = self.counts[channel]
             plt.plot_date(x=dates, y=buckets, fmt="-")
             plt.savefig(ppath, bbox_inches='tight')
             self.counts[channel] = (buckets, starttime, True)
-            
+        
+        self.channellocks[channel].release()    
         return ppath
         
     def get_plots(self, channels):
@@ -104,6 +105,10 @@ class Graphlog(logbot.Logger):
         print("attribs", attribs)
         drawn = all([d for (buckets, starttime, d) in attribs])
         print(drawn)
+        
+        for channel in channels:
+            await self.channellocks[channel]
+        
         if not drawn or not os.path.isfile(ppath):
 
             #b0, st0, d0 = attribs[0]
@@ -119,6 +124,9 @@ class Graphlog(logbot.Logger):
             plt.legend(cnames, loc='upper right')
             plt.savefig(ppath, bbox_inches='tight')
             
+        for channel in channels:
+            self.channellocks[channel].release()
+            
         return ppath
         
     def register_commands(self):
@@ -130,6 +138,9 @@ class Graphlog(logbot.Logger):
                 print(spath)
                 if not os.path.isdir(spath):
                     os.makedirs(spath)
+                    
+                for channel is server.channels:
+                    self.channellocks[channel] = asyncio.Lock()
     
         @self.client.command(pass_context=True, no_pm=True)
         async def heartbeat(ctx, *args, **kwargs):
