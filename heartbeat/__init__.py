@@ -95,7 +95,7 @@ class Graphlog(logbot.Logger):
         self.channellocks[channel].release()    
         return ppath
         
-    def get_plots(self, channels):
+    async def get_plots(self, channels):
         
         channels.sort(key=lambda c : c.name)
         cnames = [c.name for c in channels]
@@ -147,9 +147,9 @@ class Graphlog(logbot.Logger):
             """Display a graph of user activity.
             """
             if len(ctx.message.channel_mentions) == 0:
-                path = self.get_plot(ctx.message.channel)
+                path = await self.get_plot(ctx.message.channel)
             else:
-                path = self.get_plots(ctx.message.channel_mentions)
+                path = await self.get_plots(ctx.message.channel_mentions)
             print(path)
             with open(path, 'rb') as f:
                 await self.client.send_file(ctx.message.channel, f)
