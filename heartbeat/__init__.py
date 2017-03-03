@@ -139,7 +139,7 @@ class Graphlog(logbot.Logger):
                 if not os.path.isdir(spath):
                     os.makedirs(spath)
                     
-                for channel is server.channels:
+                for channel in server.channels:
                     self.channellocks[channel] = asyncio.Lock()
     
         @self.client.command(pass_context=True, no_pm=True)
