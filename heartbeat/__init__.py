@@ -80,6 +80,7 @@ class Graphlog(logbot.Logger):
         ppath = os.path.join(self.path, channel.server.name, channel.name + '.png')
         
         await self.channellocks[channel]
+        buckets, starttime, drawn = self.counts[channel]
         if not drawn or not os.path.isfile(ppath):        
             dates = []
             for i in range(len(buckets)):
@@ -87,7 +88,7 @@ class Graphlog(logbot.Logger):
                 dates.append(datetime.fromtimestamp(tstamp))
             
             plt.figure(figsize=(20,10))
-            buckets, starttime, drawn = self.counts[channel]
+            
             plt.plot_date(x=dates, y=buckets, fmt="-")
             plt.savefig(ppath, bbox_inches='tight')
             self.counts[channel] = (buckets, starttime, True)
