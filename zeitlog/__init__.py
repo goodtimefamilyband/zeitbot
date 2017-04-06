@@ -89,7 +89,7 @@ class Zeitlog(logbot.Logger):
             
             if msg.author.id == self.client.user.id:
                 return
-            
+            print(self.reacts[msg.server.name].reactre)
             match = self.reacts[msg.server.name].reactre.search(msg.content)
             if match is not None:
                 print("Got a match")
@@ -421,7 +421,7 @@ class LeaderBoard:
         
 class Reactions:
 
-    prefix = 'r'
+    prefix = '(^| )r'
     sep = '/'
     addtl = 'scores'
 
