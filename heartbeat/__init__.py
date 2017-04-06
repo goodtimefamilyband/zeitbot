@@ -89,6 +89,8 @@ class Graphlog(logbot.Logger):
             
             plt.figure(figsize=(20,10))
             
+            
+            
             plt.plot_date(x=dates, y=buckets, fmt="-")
             plt.savefig(ppath, bbox_inches='tight')
             self.counts[channel] = (buckets, starttime, True)
@@ -103,9 +105,7 @@ class Graphlog(logbot.Logger):
         fname = '_'.join(cnames) + '.png'
         ppath = os.path.join(self.path, channels[0].server.name, fname)
         attribs = [self.counts[channel] for channel in channels]
-        print("attribs", attribs)
         drawn = all([d for (buckets, starttime, d) in attribs])
-        print(drawn)
         
         for channel in channels:
             await self.channellocks[channel]
@@ -117,9 +117,11 @@ class Graphlog(logbot.Logger):
             plt.figure(figsize=(20,10))
             for channel in channels:
                 buckets, st0, drawn = self.counts[channel]
-                dates = mdates.drange(datetime.fromtimestamp(st0), datetime.fromtimestamp(st0 + 3600*24*7), timedelta(hours=1))
-                print("buckets", buckets)
-                plt.plot_date(dates, buckets, fmt='-')
+                dates = mdates.drange(datetime.fromtimestamp(st0), datetime.fromtimestamp(st0 + 3600*len(buckets)), timedelta(hours=1))
+                
+                #Weird DST fix
+                dstart = len(dates) - len(buckets)
+                plt.plot_date(dates[dstart:], buckets, fmt='-')
                 self.counts[channel] = (buckets, st0, True)
                 
             plt.legend(cnames, loc='upper right')
