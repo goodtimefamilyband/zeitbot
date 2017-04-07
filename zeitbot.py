@@ -10,10 +10,13 @@ token = sys.argv[1]
 from app import bot
 from zeitlog import Zeitlog
 from heartbeat import Graphlog
+from rcounter import ReactCounter
 
 from app.schema import Session
 db_session = Session()
 
 zlogger = Zeitlog(db_session)
 glogger = Graphlog('graphs')
+rlogger = ReactCounter()
+
 bot.run(token)
