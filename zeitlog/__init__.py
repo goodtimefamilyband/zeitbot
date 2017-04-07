@@ -46,14 +46,14 @@ class Zeitlog(logbot.Logger):
         self.scorecards[channel] = []
         
     def process_message(self, msg):
-        self.scorecards[msg.channel].append(ScoreCard(msg, self.scoretbl[msg.server.name]))
+        self.scorecards[msg.channel].append(ScoreCard(msg, self.scoretbl[msg.server.id]))
         
     async def after_channel_update(self, channel):
         scorecards = self.scorecards[channel]
         
         print("Got {} scorecards for {}".format(len(scorecards), channel.name))
         tempboard = {}
-        for score in self.scoretbl[channel.server.name].keys():
+        for score in self.scoretbl[channel.server.id].keys():
             await self.client.set_status(score, self.client.ws_status)
             slist = [sc for sc in scorecards if score in sc.scores]
             tempboard[score] = sorted(slist, key=lambda sc: sc.scores[score], reverse=True)[:10]
@@ -76,10 +76,10 @@ class Zeitlog(logbot.Logger):
             for s in self.client.servers:
                 #react_res[s.name] = re.compile('z/')
             
-                for score in self.db.query(ScoreTbl).filter_by(server=s.name):
-                    self.scoretbl[s.name][score.name] = Score(score, self.client, self.db)
+                for score in self.db.query(ScoreTbl).filter_by(server=s.id):
+                    self.scoretbl[s.id][score.name] = Score(score, self.client, self.db)
                     
-                self.reacts[s.name] = Reactions(s.name, self.db, scores=list(self.scoretbl[s.name]))
+                self.reacts[s.id] = Reactions(s.id, self.db, scores=list(self.scoretbl[s.id]))
                 for channel in s.channels:
                     self.leaderboards[channel] = LeaderBoard()
 
@@ -89,8 +89,8 @@ class Zeitlog(logbot.Logger):
             
             if msg.author.id == self.client.user.id:
                 return
-            print(self.reacts[msg.server.name].reactre)
-            match = self.reacts[msg.server.name].reactre.search(msg.content)
+            #print(self.reacts[msg.server.id].reactre)
+            match = self.reacts[msg.server.id].reactre.search(msg.content)
             if match is not None:
                 print("Got a match")
                 s,e = match.span()
@@ -101,12 +101,12 @@ class Zeitlog(logbot.Logger):
                 for mitem in mitems[1:]:
                     print("Checking", mitem)
                     #print(reacts)
-                    if mitem in self.scoretbl[msg.server.name]:
-                        for si in self.scoretbl[msg.server.name][mitem].emojis.values():
+                    if mitem in self.scoretbl[msg.server.id]:
+                        for si in self.scoretbl[msg.server.id][mitem].emojis.values():
                             emojis.append(getEmojiObj(msg.server, si.emoji))
-                    elif mitem in self.reacts[msg.server.name]:
+                    elif mitem in self.reacts[msg.server.id]:
                         print(mitem)
-                        e = self.reacts[msg.server.name][mitem]
+                        e = self.reacts[msg.server.id][mitem]
                         em = getEmojiObj(msg.server, e)
                         '''
                         em = discord.utils.find(lambda emo: str(emo) == e, msg.server.emojis)
@@ -128,7 +128,7 @@ class Zeitlog(logbot.Logger):
             cmd -- create, delete, or about
             name -- the name of the score to create or delete or about
             """
-            res = await getattr(ScoreCommands, cmd)(ctx, name, self.db, self.scoretbl[ctx.message.server.name], self.reacts[ctx.message.server.name])
+            res = await getattr(ScoreCommands, cmd)(ctx, name, self.db, self.scoretbl[ctx.message.server.id], self.reacts[ctx.message.server.id])
             
             if res is not None:
                 if res:
@@ -148,7 +148,7 @@ class Zeitlog(logbot.Logger):
             Messages possessing n emoji reactions will have n*count added to their score with the given name\n\n
             """
             
-            score = self.scoretbl[ctx.message.server.name][name]
+            score = self.scoretbl[ctx.message.server.id][name]
             is_admin = ctx.message.server.default_channel.permissions_for(ctx.message.author).administrator
             if not is_admin and ctx.message.author != score.owner:
                 await self.client.send_message(ctx.message.channel, "You are not allowed to modify this score")
@@ -162,8 +162,8 @@ class Zeitlog(logbot.Logger):
         @self.client.command(pass_context=True, no_pm=True)
         async def scores(ctx, *args, **kwargs):
             """Display a list of scores"""
-            
-            scores = self.scoretbl[ctx.message.server.name].keys()
+            print(self.scoretbl)
+            scores = self.scoretbl[ctx.message.server.id].keys()
             print(ctx.message.server.name, scores)
             print("\n".join([score for score in scores]))
             msg = "No scores yet"
@@ -229,13 +229,13 @@ class Zeitlog(logbot.Logger):
             if not is_admin:
                 await self.client.send_message(ctx.message.channel, "Sorry, you're not allowed to use this command")
             
-            self.reacts[ctx.message.server.name][str] = emoji
-            self.reacts[ctx.message.server.name].save()
+            self.reacts[ctx.message.server.id][str] = emoji
+            self.reacts[ctx.message.server.id].save()
             '''
             reacts_group = "|".join(reacts[ctx.message.server.name].keys())
             reacts_regex = "r/({})(/({}))*".format(reacts_group, reacts_group)
             '''
-            print(self.reacts[ctx.message.server.name].reactre)
+            print(self.reacts[ctx.message.server.id].reactre)
             #react_res[ctx.message.server.name] = re.compile(reacts_regex)
             await self.client.send_message(ctx.message.channel, "Reaction added")
 
@@ -246,7 +246,7 @@ class Zeitlog(logbot.Logger):
             To use auto reactions, include the string r/react1/react2/.../reactn anywhere in your message, where react1, react2, ..., reactn are the strings on the right in the response to this command.
             You can also use the names of scores. If you do, all the emojis in that score will be used in auto-reactions to your message.
             '''
-            msg = "\n".join(["{} {}".format(r.emoji, str) for (str, r) in self.reacts[ctx.message.server.name].reactdict.items()])
+            msg = "\n".join(["{} {}".format(r.emoji, str) for (str, r) in self.reacts[ctx.message.server.id].reactdict.items()])
             await self.client.send_message(ctx.message.channel, "-------\n" + msg)
 
 
@@ -289,7 +289,7 @@ class Score:
     
         self.lock = asyncio.Lock()
         self.srecord = srecord
-        self.server = discord.utils.find(lambda s : s.name == srecord.server, client.servers)
+        self.server = discord.utils.find(lambda s : s.id == srecord.server, client.servers)
         self.owner = discord.utils.find(lambda m : m.id == srecord.owner, self.server.members)
         
         self.db = db
@@ -362,7 +362,7 @@ class ScoreCommands:
     @staticmethod
     async def create(ctx, name, db, scoretbl, reacts):
         if not name in scoretbl:
-            stbl = ScoreTbl(name=name, owner=ctx.message.author.id, server=ctx.message.server.name)
+            stbl = ScoreTbl(name=name, owner=ctx.message.author.id, server=ctx.message.server.id)
             s = Score(stbl, ctx.bot, db)
             scoretbl[stbl.name] = s
             print("Saving")
