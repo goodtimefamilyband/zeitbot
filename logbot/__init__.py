@@ -144,3 +144,23 @@ class Logbot(commands.Bot):
             return loggerInstance
             
         return decorator
+        
+    '''
+    async def send_message(self, destination, content=None, *args, tts=False, embed=None, in_reply_to=None):
+        try:
+            await super().send_message(destination, content, *args, tts=tts, embed=embed)
+            return True
+        except discord.errors.Forbidden:
+            if in_reply_to is not None:
+                await super().send_message(in_reply_to, "I'm not allowed to send messages to #" + destination.name)
+            return False
+    '''
+            
+    async def process_commands(self, message):
+        try:
+            await super().process_commands(message)
+        except discord.ext.commands.errors.CommandInvokeError as ex:
+            try:
+                raise ex.__cause__
+            except discord.errors.Forbidden:
+                await super().send_message(message.author, "I'm not allowed to send messages to #" + destination.name)
