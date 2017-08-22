@@ -1,3 +1,3 @@
 import logbot
 
-bot = logbot.Logbot(command_prefix='z>')
+bot = logbot.Regbot(command_prefix='z>')
