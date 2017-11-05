@@ -35,6 +35,7 @@ class Logger:
         pass
         
     def set_client(self, client):
+        print("Setting client")
         self.client = client
         self.register_commands()
         
@@ -92,12 +93,15 @@ class Logbot(commands.Bot):
                     
                 for channel in server.channels:
                     for l in self.loggers:
-                        await l.before_channel_update(channel)
+                        #TODO: don't use coro, make this not async, use create_task instead
+                        coro = l.before_channel_update(channel)
+                        if not coro is None:
+                            await coro#l.before_channel_update(channel)
                     
                     try:
-                        t = datetime.fromtimestamp(time.time() - self.msg_ival)
+                        #t = datetime.fromtimestamp(time.time() - self.msg_ival)
                         for l in self.loggers:
-                            l.channel_update_starttime(channel, t)
+                            l.channel_update_starttime(channel, datetime.fromtimestamp(time.time()))
                         
                         async for m in self.get_logs(channel):
                             for l in self.loggers:
@@ -107,13 +111,19 @@ class Logbot(commands.Bot):
                         print("{}: Can't access {} on {}".format(ex, channel.name, server.name))
                     
                     for l in self.loggers:
-                        await l.after_channel_update(channel)    
+                        coro = l.after_channel_update(channel)
+                        if not coro is None:
+                            await coro
+                        #await l.after_channel_update(channel)    
                         
                 for l in self.loggers:
                     l.after_server_update(server)
                     
             for l in self.loggers:
-                await l.after_update()
+                coro = l.after_update()
+                if not coro is None:
+                    await coro
+                #await l.after_update()
             
         except aiohttp.errors.ServerDisconnectedError as ex:
             print(ex)
@@ -171,4 +181,22 @@ class Regbot(Logbot):
             except discord.errors.Forbidden:
                 await super().send_message(message.author, "I'm not allowed to send messages to #" + destination.name)
 
+class DiscreteLogbot(Logbot):
     
+    '''
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        
+        self.after = init_time
+        self.before = None
+    '''
+        
+    def get_logs(self, channel):
+        return self.logs_from(channel, before=datetime.fromtimestamp(self.before), after=datetime.fromtimestamp(self.after))
+        
+    '''
+    async def process_loop(self):
+        self.before = time.time()
+        await super().process_loop()
+        self.after = self.before
+    '''
