@@ -26,7 +26,7 @@ class Graphlog(logbot.Logger):
     
     periods = 24*7
     
-    def __init__(self, path):
+    def __init__(self, path, msg_ival=604800):
         self.path = path
         
         if not os.path.isdir(self.path):
@@ -35,15 +35,18 @@ class Graphlog(logbot.Logger):
         self.messages = ChannelContainer()
         self.starttimes = ChannelContainer()
         self.counts = ChannelContainer()
+        self.msg_ival = msg_ival
         
         self.channellocks = ChannelContainer()
     
     async def before_channel_update(self, channel):
         self.messages[channel] = []
-        
+    
+    '''    
     def channel_update_starttime(self, channel, st):
-        self.starttimes[channel] = st
-        
+        self.starttimes[channel] = st - self.msg_ival
+    '''
+    
     def process_message(self, msg):
         self.messages[msg.channel].append(msg)
         
@@ -52,10 +55,11 @@ class Graphlog(logbot.Logger):
             return
         
         messages = self.messages[channel]
-        starttime = self.starttimes[channel].timestamp()
+        #starttime = self.starttimes[channel].timestamp()
         endtime = time.time()
+        starttime = endtime - self.msg_ival
         delta = endtime - starttime
-        
+        print("delta", delta)
         buckets = [0] * (int(delta/3600))
         for m in messages:
             aware_tz = pytz.utc.localize(m.timestamp)
@@ -81,6 +85,7 @@ class Graphlog(logbot.Logger):
         
         await self.channellocks[channel]
         buckets, starttime, drawn = self.counts[channel]
+        print(starttime)
         if not drawn or not os.path.isfile(ppath):        
             dates = []
             for i in range(len(buckets)):
