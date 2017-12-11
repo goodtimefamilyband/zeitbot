@@ -228,6 +228,7 @@ class Zeitlog(logbot.Logger):
             is_admin = ctx.message.server.default_channel.permissions_for(ctx.message.author).administrator
             if not is_admin:
                 await self.client.send_message(ctx.message.channel, "Sorry, you're not allowed to use this command")
+                return
             
             self.reacts[ctx.message.server.id][str] = emoji
             self.reacts[ctx.message.server.id].save()
@@ -262,6 +263,9 @@ def formatMessage(m):
     content = m.content
     for u in m.mentions:
         content = content.replace(u.mention, '@' + u.display_name)
+        
+    content = content.replace('@everyone', 'everyone')
+    content = content.replace('@here', 'here')
         
     if len(content) != 0:
         mstr += '{}\n'.format(content)
