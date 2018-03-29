@@ -30,6 +30,9 @@ class Zeitlog(logbot.Logger):
         self.busy = True
         self.busylock = asyncio.Lock()
         
+        self.lbQ = asyncio.Queue()
+        self.msgQ = asyncio.Queue()
+        
     async def set_busy(self, val):
         await self.busylock
         self.busy = val
@@ -66,8 +69,52 @@ class Zeitlog(logbot.Logger):
         status = discord.Status.online
         await self.client.set_status("Use z>help", status)
         
+    async def qLoop(self, q, qCons, waitTime=0):
+        while not self.client.is_closed:
+            nextItem = await q.get()
+            await qCons(nextItem)
+            
+            if waitTime > 0:
+                await asyncio.sleep(waitTime)
+                
+    async def enqueue_lb(self, scores, leaderboard, dstchannel, channame):
+        await self.lbQ.put((scores, leaderboard, dstchannel, channame))
+                
+    async def process_lb_req(self, lb):
+        (scores,leaderboard,channel,channame) = lb
+        
+        for score in scores:
+            if score in leaderboard:
+                # await self.client.send_message(ctx.message.channel, "**__{}__**".format(score))
+                await self.enqueue_message(channel, "**__{}__**".format(score))
+                if len(leaderboard[score]) == 0:
+                    # await self.client.send_message(ctx.message.channel, "No messages for {} in {} :(".format(score, chan.name))
+                    await self.enqueue_message(channel, "No messages for {} in {} :(".format(score, channame))
+                for sc in leaderboard[score]:
+                    e = None
+                    if len(sc.message.attachments) != 0:
+                        e = discord.Embed()
+                        e.set_image(url=sc.message.attachments[0]['url'])
+                    
+                    # await self.client.send_message(ctx.message.channel, formatMessage(sc.message), embed=e)
+                    await self.enqueue_message(channel, formatMessage(sc.message), embed=e)
+                    
+        # await self.client.send_message(ctx.message.channel, "======= That's all =======")
+        await self.enqueue_message(channel, "======= That's all =======")
+        
+    async def enqueue_message(self, channel, msg, embed=None):
+        await self.msgQ.put((channel, msg, embed))
+        
+    async def send_message(self, msgspec):
+        (channel, message, embed) = msgspec
+        await self.client.send_message(channel, message, embed=embed)
+        
+        
     def register_commands(self):
         print("Registering commands")
+        
+        self.client.loop.create_task(self.qLoop(self.msgQ, self.send_message, waitTime=1))
+        self.client.loop.create_task(self.qLoop(self.lbQ, self.process_lb_req))
         
         @self.client.event
         async def on_ready():
@@ -207,7 +254,15 @@ class Zeitlog(logbot.Logger):
                 await self.client.send_message(ctx.message.channel, "Please specify at least one score. Type z>scores to see a list")
             else:
                 scores = args
+                
+            dstchannel = discord.utils.find(lambda c: c.name == "zeitgeist", serv.channels)
+            if dstchannel is None:
+                await self.client.send_message(ctx.message.channel, "No channel named zeitgeist. Please create one.")
+                return
             
+            await self.enqueue_lb(scores, leaderboard, dstchannel, chan.name)
+            await self.client.send_message(ctx.message.channel, "Messages sent to {}".format(dstchannel.mention))
+            '''
             for score in scores:
                 if score in leaderboard:
                     await self.client.send_message(ctx.message.channel, "**__{}__**".format(score))
@@ -222,6 +277,7 @@ class Zeitlog(logbot.Logger):
                         await self.client.send_message(ctx.message.channel, formatMessage(sc.message), embed=e)
 
             await self.client.send_message(ctx.message.channel, "======= That's all =======")
+            '''
 
         @self.client.command(pass_context=True, no_pm=True)
         async def react(ctx, str, emoji):
