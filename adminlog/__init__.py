@@ -4,11 +4,12 @@ import time
 from logbot import Logger, Logbot, DiscreteLogbot
 #from app import bot
 from collections import defaultdict
-from .schema import Server, Member, Role, Rule, RuleRole, RoleException
+#from .schema import Server, Member, Role, Rule, RuleRole, RoleException
 
 from discord.ext import commands
            
 adminbot = DiscreteLogbot(command_prefix='a.')
+# adminbot = commands.Bot(command_prefix='a.')
 
 @adminbot.logger
 class AdminLogger(Logger):
@@ -22,7 +23,8 @@ class AdminLogger(Logger):
         print("before_update")
 
     def before_server_update(self, server):
-        
+        pass
+        '''
         self.member_count_table = defaultdict(int)
         self.membertable = {}
         if not server.id in self.servertable:
@@ -38,23 +40,28 @@ class AdminLogger(Logger):
             
         self.client.after = self.servertable[server.id].after
         self.client.before = time.time()
+        '''
 
     def before_channel_update(self, channel):
         print("before_channel_update")
 
     def process_message(self, msg):
+        pass
+        '''
         self.member_count_table[msg.author.id] += 1
         self.membertable[msg.author.id] = msg.author
         t = time.mktime(msg.timestamp.timetuple())
         if t > self.servertable[msg.server.id].after:
             self.servertable[msg.server.id].after = t
             self.db.commit()
-        
+        '''
         
     def after_channel_update(self, channel):
         print("after_channel_update")
         
     def after_server_update(self, server):
+        pass
+        '''
         dbserv = self.servertable[server.id]
         
         for memberid, count in self.member_count_table.items():
@@ -68,6 +75,7 @@ class AdminLogger(Logger):
                 self.client.loop.create_task(rule([member.msgcount], [self.membertable[memberid]]))
             
         self.db.commit()
+        '''
         
     def after_update(self):
         print("after_update")
@@ -78,8 +86,19 @@ class AdminLogger(Logger):
             print("***admin_check***", ctx.message.content, ctx.message.channel.permissions_for(ctx.message.author).administrator)
             return ctx.message.channel.permissions_for(ctx.message.author).administrator
         
+        @self.client.group(pass_context=True)
+        async def addcondition(ctx):
+            pass
+            
+        @self.client.group(pass_context=True)
+        async def test(ctx, *args):
+            print("test[ctx={}, args={}]".format(ctx, args))
+        
+        
         @self.client.event
         async def on_ready():
+            pass
+            '''
             print('Logged in as', self.client.user.name)
             
             print(self.client.servers)
@@ -94,8 +113,9 @@ class AdminLogger(Logger):
                     print("Loading server", server.id, server.name)
                     dbserv.load_rules(self.client, self.db)
                     self.servertable[dbserv.id] = dbserv
+            '''
             
-            
+        '''
         @commands.check(admin_check)
         @self.client.command(pass_context=True, no_pm=True)
         async def roleadd(ctx, *args, **kwargs):
@@ -181,7 +201,7 @@ class AdminLogger(Logger):
             for rule in self.servertable[msg.server.id].ruleset:
                 self.client.loop.create_task(rule([dbmember.msgcount], [msg.author]))
         
-        '''
+        
         @self.client.event
         async def on_member_update(before, after):
             removed_roles = [role for role in before.roles if role not in after.roles]
@@ -193,7 +213,8 @@ class AdminLogger(Logger):
                 
             self.db.commit()
         '''
-'''                
+        
+'''  
 def async_partial(f, *oargs, **okwargs):
     async def inner(*args, **kwargs):
         newkwargs = okwargs.copy()

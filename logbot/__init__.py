@@ -183,20 +183,18 @@ class Regbot(Logbot):
 
 class DiscreteLogbot(Logbot):
     
-    '''
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         
-        self.after = init_time
+        self.after = time.time()
         self.before = None
-    '''
         
     def get_logs(self, channel):
         return self.logs_from(channel, before=datetime.fromtimestamp(self.before), after=datetime.fromtimestamp(self.after))
         
-    '''
+    
     async def process_loop(self):
         self.before = time.time()
         await super().process_loop()
         self.after = self.before
-    '''
+    

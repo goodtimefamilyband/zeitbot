@@ -4,6 +4,8 @@
 SQLALCHEMY_DATABASE_URI = 'sqlite:///adminbot.db'
 SQL_DEBUG = False
 
+import sys
+
 #import sqlalchemy
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -11,14 +13,55 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy import Column, ForeignKey, Integer, String, Date, Float, Boolean
 
 import sys
-
 import discord
-from .classes import Condition, Action, RuleBase
 
 Base = declarative_base()
 engine = create_engine(SQLALCHEMY_DATABASE_URI, echo=SQL_DEBUG)
 
-Session = sessionmaker(bind=engine) 
+Session = sessionmaker(bind=engine)
+
+listeners = []
+
+def listener(cls):
+    listeners.append(cls)
+
+def get_db_member(db, member):
+    member = db.query(Member).filter_by(id=member.id).filter_by(serverid=member.server.id).first()
+    if member is None:
+        member = Member(id=member.id, serverid=member.server.id, name=member.name)
+        db.add(member)
+        db.commit()
+        
+    return member
+    
+class CommandListener:
+    def register_listeners(self, bot, db):
+        pass
+        
+class Condition(CommandListener):
+    
+    addcommand = "addcondition"
+    testcommand = "test"
+    
+    async def evaluate(self, db, bot, *args, **kwargs):
+        return False
+        
+    def add_condition_entry(self, db):
+        condentry = ConditionEntry(condclass=type(self).__name__)
+        db.add(condentry)
+        return condentry
+        
+class Action(CommandListener):
+    
+    addcommand = "addaction"
+
+    async def perform(self, db, bot, *args, **kwargs):
+        pass
+        
+    def add_action_entry(self, db):
+        actentry = ActionEntry(actclass=type(self).__name__)
+        db.add(actentry)
+        return actentry
 
 #TODO: use object_session() (or similar)?
 
@@ -32,184 +75,253 @@ class Server(Base):
         self.ruleset = db.query(Rule).filter_by(serverid=self.id).all()
         for rule in self.ruleset:
             rule.load_rule(bot, db)
+
+
+#TODO: Inherit from this? How to instantiate?    
+class Rule(Base):
+    __tablename__ = "rules"
+    
+    id = Column(Integer, primary_key=True)
+    serverid = Column(String, ForeignKey('servers.id'))
+    condid = Column(Integer)
+    event = Column(String)
     
 class Member(Base):
     __tablename__ = "members"
     
     id = Column(String, primary_key=True)
     serverid = Column(String, ForeignKey('servers.id'), primary_key=True)
-    msgcount = Column(Integer, default=0)
+    name = Column(String)
 
+class MemberMessageCount(Base):
+    __tablename__ = "membermessagecounts"
+
+    countid = Column(Integer, ForeignKey('membermessagecounters.actid'), primary_key=True)
+    memberid = Column(String, ForeignKey("members.id"), primary_key=True)
+    msgcount = Column(Integer, default=0)
+    
 class Role(Base):
     __tablename__ = "roles"
     
     id = Column(String, primary_key=True)
+    serverid = Column(String)
+    name = Column(String)
     
     def find_discord_role(self, server):
         return discord.utils.find(lambda r : r.id == self.id, server.roles)
         
+        
 
-class RuleRole(Base):
-    __tablename__ = "rule_role"
-    
-    ruleid = Column(Integer, ForeignKey('rules.id'), primary_key=True)
-    roleid = Column(String, ForeignKey('roles.id'), primary_key=True)
-
-    
-class DBClass(Base):
-    __tablename__ = "classes"
+class ConditionEntry(Base):
+    __tablename__ = "conditions"
     
     id = Column(Integer, primary_key=True)
-    classname = Column(String)
-#    datatbl = Column(String)
+    condclass = Column(String, nullable=False)
     
-class ConditionBase(Condition):
-    id = Column(Integer, primary_key=True)
+    def load_condition(self, db, mod):
+        entryclass = getattr(mod, self.condclass)
+        cond = db.query(entryclass).filter_by(condid=self.id).first()
+        return cond
     
-class ActionBase(Action)
-    id = Column(Integer, primary_key=True)
-    
-class MessageCountCondition(ConditionBase):
-
-    __tablename__ = "msgcounts"
-
-    count = Column(Integer, default=0)
-    serverid = Column(Integer, ForeignKey('servers.id'))
-
-    '''
-    def __init__(self, count, bot, server):
-        self.bot = bot
-        self.server = server
-        self.usercounts = defaultdict(int)
-        self.count = count
-        
-        self.bot.loop.create_task(self.loop())
-    '''
-        
-    def server_check(self, msg):
-        return self.server.id == msg.server.id
-
-    '''
-    async def loop(self):
-        while not self.bot.is_closed:
-            msg = await self.bot.wait_for_message(check=self.server_check)
-            self.bot.loop.create_task(self.update(message))
-        
-    async def update(self, message):
-        self.increase_user_count(message.author, 1)
-    '''
-    
-    # TODO: modify for use with DB
-    def get_user_count(self, user, db):
-        m = db.query(Member).filter_by(id=user.id)
-        return m.msgcount
-        
-    def increase_user_count(self, user, amt, db):
-        #self.usercounts[user.id] += amt
-        m = db.query(Member).filter_by(id=user.id)
-        m.msgcount += amt
-        db.add(m)
-        db.commit()
-        
-    def eval(self, user):
-        print("Evaluating {} >= {} : {}".format(count, self.count, count >= self.count))
-        return self.get_user_count(user) >= self.count
-    
-
-class AddRoleAction(ActionBase):
-    #def __init__(self, bot, *roles, dbcheck = lambda u,r : (r)):
-    serverid = Column(Integer, ForeignKey('servers.id'))
-    
-    def get_roles(self, db, server):
-        return [r.find_discord_role(server) for r in db.query(Role).join(RuleRole, Role.id == RuleRole.roleid).filter(RuleRole.ruleid == self.id)]
-    
-    async def __call__(self, dmember, db, client):
-        roles = [role for role in self.get_roles(db, dmember.server) if not role in dmember.roles]
-        #print("AddRoleAction {} {} {}".format([role.name for role in roles], self.roles, user.roles))
-        if len(roles) > 0:
-            await client.add_roles(user, *roles)
-
-class DBRule(Base):
-    __tablename__ = "rules"
+class ActionEntry(Base):
+    __tablename__ = "actions"
     
     id = Column(Integer, primary_key=True)
-    serverid = Column(String, ForeignKey('servers.id'))
-    classname = Column(String)
+    ruleid = Column(Integer, ForeignKey('rules.id'))
+    actclass = Column(String, nullable=False)
     
-    def get_rule(self, db):
-        return db.query(getattr(sys.modules[__name__], classname)).filter_by(id=self.id).first())
-
-class MessageCountRoleAddRule(Base, RuleBase):
-    __tablename__ = "messagecountrolerules":
+@listener
+class TrueCondition(Base, Condition):
+    __tablename__ = "trueconditions"
     
-    id = Column(Integer, ForeignKey('rules.id'), primary_key = True)
-    condid = Column(Integer)
-    actid = Column(Integer)
+    condid = Column(Integer, ForeignKey('conditions.id'), primary_key=True)
     
-    def register(self, db):
+    async def evaluate(*args, **kwargs):
+        return True
         
-    
-#TODO: Inherit from this? How to instantiate?    
-class Rule(Base, RuleBase):
-    __tablename__ = "rules"
-    
-    id = Column(Integer, primary_key=True)
-    serverid = Column(String, ForeignKey('servers.id'))
-    condtype = Column(String)
-    condid = Column(Integer)
-    acttype = Column(String)
-    actid = Column(Integer)
-    event = Column(String)
-    
-    def get_condition(self, db):
-        #return db.query(getattr(sys.modules[__name__], self.condtype)).filter_by(id=self.condid).first()
-        return self.get_instance(db, self.condtype, self.condid)
+    def register_listeners(self, bot, db):
+        addgrp = bot.get_command(Condition.addcommand)
+        testgrp = bot.get_command(Condition.testcommand)
         
-    def get_action(self, db):
-        #return db.query(getattr(sys.modules[__name__], self.condtype)).filter_by(id=self.condid).first()
-        return self.get_instance(db, self.acttype, self.actid)
-        
-    def get_instance(self, db, classname, id):
-        return db.query(getattr(sys.modules[__name__], classname)).filter_by(id=id).first()
-    
-    
-    '''
-    def load_rule(self, bot, db):
-        self.condition = MessageCountCondition(self.mincount)
-        server = discord.utils.find(lambda s : s.id == self.serverid, bot.servers)
-        roles = [r.find_discord_role(server) for r in db.query(Role).join(RuleRole, Role.id == RuleRole.roleid).filter(RuleRole.ruleid == self.id)]
-        
-        print(roles)
-        self.action = AddRoleAction(bot, *roles)
-        
-    def dbcheckfun(self, db):
-        
-        def check(u,r):
-            newroles = {}
-            for role in r:
-                newroles[role.id] = role
-            for rexcept in db.query(RoleException).filter_by(ruleid=self.id, memberid=u.id):
-                del newroles[rexcept.roleid]
-                
-            return newroles.values()
+        if addgrp.get_command("alwaystrue") is None:
             
-        return check
-        
-    def __str__(self):
-        try:
-            return "({}) Roles added after {} messages: {}".format(self.id, self.mincount, ",".join([r.name for r in self.action.roles]))
-        except AttributeError:
-            return ""
-    '''    
-
-
-'''    
-class RoleException(Base):
-    __tablename__ = "role_exceptions"
+            @addgrp.command(pass_context=True, no_pm=True)
+            async def alwaystrue(ctx):
+                condentry = self.add_condition_entry(db)
+                condition = TrueCondition(condid=condentry.id)
+                db.add(condition)
+                db.commit()
+                
+        if testgrp.get_command("alwaystrue") is None:
+            
+            @testgrp.command(pass_context=True, no_pm=True)
+            async def alwaystrue(ctx, condid):
+                cond = db.query(TrueCondition).filter_by(condid=condid).first()
+                if cond is None:
+                    await ctx.bot.send_message(ctx.message.channel, "Could not find condition with ID " + condid)
+                    return
+                
+                result = cond.evaluate()
+                ctx.bot.send_message(ctx.message.channel, "Result: " + result)
+                
+@listener
+class ComplementCondition(Base, Condition):
+    __tablename__ = 'complements'
     
-    ruleid = Column(Integer, ForeignKey('rules.id'), primary_key=True)
+    condid = Column(Integer, ForeignKey('conditions.id'), primary_key=True)
+    target = Column(Integer, ForeignKey('conditions.id'))
+    
+    async def evaluate(self, db, bot, *args, **kwargs):
+        tgtentry = db.query(ConditionEntry).filter_by(id=self.target).first()
+        tgt = tgtentry.load_condition(db, sys.modules[__name__])
+        res = await tgt.evaluate(db, bot, *args, **kwargs)
+        return not res
+        
+    def register_listeners(self, bot, db):
+        addgrp = bot.get_command(Condition.addcommand)
+        testgrp = bot.get_command(Condition.testcommand)
+        
+        if addgrp.get_command("opposite") is None:
+            @addgrp.command(pass_context=True, no_pm=True)
+            async def opposite(ctx, target):
+                condentry = self.add_action_entry(db)
+                cond = ComplementCondition(condid=condentry.id, target=int(target))
+                db.add(target)
+                db.commit()
+                
+        # TODO: This should probably handle other types of events
+        if testgrp.get_command("opposite") is None:
+            @testgrp.command(pass_context=True, no_pm=True)
+            async def opposite(ctx, condid):
+                cond = db.query(ComplementCondition).filter_by(condid=condid).first()
+                if cond is None:
+                    await ctx.bot.send_message(ctx.message.channel, "Could not find condition with ID " + condid)
+                    return
+                
+                result = cond.evaluate(db, ctx.bot, msg)
+                ctx.bot.send_message(ctx.message.channel, "Result: " + result)
+        
+class AndCondition(Base, Condition):
+    __tablename__ = 'andconditions'
+    
+    condid = Column(Integer, ForeignKey('conditions.id'), primary_key=True)
+    lhand = Column(Integer, ForeignKey('conditions.id'))
+    rhand = Column(Integer, ForeignKey('conditions.id'))
+    
+    async def evaluate(self, db, bot, *args, **kwargs):
+        lhandentry = db.query(ConditionEntry).filter_by(id=self.lhand)
+        rhandentry = db.query(ConditionEntry).filter_by(id=self.rhand)
+        
+        lhandcond = lhandentry.load_condition(db, sys.modules[__name__])
+        rhandcond = rhandentry.load_condition(db, sys.modules[__name__])
+        
+        return lhandcond.evaluate(self, db, bot, *args, **kwargs) and rhandcond.evaluate(self, db, bot, *args, **kwargs)
+        
+class BlacklistEntry:
+    __tablename__ = 'roleblacklist'
+    
     roleid = Column(String, ForeignKey('roles.id'), primary_key=True)
     memberid = Column(String, ForeignKey('members.id'), primary_key=True)
-'''    
+        
+class RoleBlacklist(Base, Condition):
+    __tablename__ = 'roleblacklistcond'
+    
+    condid = Column(Integer, ForeignKey('conditions.id'), primary_key=True)
+    roleid = Column(String, ForeignKey('roles.id'), primary_key=True)
+    
+    async def evaluate(self, db, bot, msg):
+        blentry = db.query(BlacklistEntry).filter_by(roleid=self.roleid).filter_by(memberid=msg.author.id).first()
+        return blentry is None
+    
+class MemberMessageQuota(Base, Condition):
+
+    __tablename__ = "msgquotas"
+
+    condid = Column(Integer, ForeignKey('conditions.id'), primary_key=True)
+    countid = Column(Integer, ForeignKey('membermessagecounters.actid'))
+    count = Column(Integer, nullable=False)
+    serverid = Column(String, ForeignKey('servers.id'))
+    
+    async def evaluate(self, db, bot, msg):
+        dbmember = get_db_member(db, msg.author)
+        mc_alias = aliased(MemberMessageCount)
+        count = db.query(Member).join(mc_alias, Member.id == mc_alias.memberid).\
+        filter(mc_alias.msgcount >= self.count).\
+        filter(Member.id == dbmember.id).first()
+        
+        return count is None
+        
+class RoleChecker(Base, Condition):
+    __tablename__ = "rolecheckers"
+    
+    condid = Column(Integer, ForeignKey('conditions.id'), primary_key=True)
+    roleid = Column(String, ForeignKey('roles.id'))
+    
+    async def evaluate(self, db, bot, msg):
+        for role in msg.author.roles:
+            if role.id == this.roleid:
+                return True
+                
+        return False
+        
+class RoleAdderRole(Base):
+    __tablename__ = 'roleadderroles'
+    
+    roleid = Column(String, ForeignKey('roles.id'), primary_key=True)
+    actid = actid = Column(Integer, ForeignKey('actions.id'), primary_key=True)
+    
+
+class RoleAdder(Base, Action):
+    __tablename__ = "roleadders"
+    
+    actid = Column(Integer, ForeignKey('actions.id'), primary_key=True)
+    
+    async def perform(self, db, bot, msg):
+        rar_alias = aliased(RoleAdderRole)
+    
+        roles = db.query(Role).\
+        join(rar_alias, Role.roleid == rar_alias.roleid).\
+        filter(rar_alias.actid == self.actid)
+        
+        servers = {}
+        for role in roles:
+            servers[role.serverid] = discord.utils.find(lambda s : s.id == role.serverid, bot.servers)
+            
+        rolestoadd = [r.find_discord_role(servers[r.serverid]) in roles]
+        if len(rolestoadd) > 0:
+            await bot.add_roles(msg.author, *rolestoadd)
+        
+class RoleBlacklister(Base, Action):
+    __tablename__ = "blacklisters"
+    
+    actid = Column(Integer, ForeignKey('actions.id'), primary_key=True)
+    roleid = Column(String, ForeignKey('roles.id'))
+    
+    async def perform(self, db, bot, msg):
+        dbmember = get_db_member(db, msg.author)
+        blentry = BlacklistEntry(roleid=self.roleid,memberid=dbmember.id)
+        db.add(blentry)
+        db.commit()
+        
+        
+class MemberMessageCounter(Base, Action):
+    __tablename__ = "membermessagecounters"
+    
+    actid = Column(Integer, ForeignKey('actions.id'), primary_key=True)
+    
+    async def perform(self, db, bot, msg):
+        dbmember = get_db_member(db, msg.author)
+        
+        msgcount = db.query(MemberMessageCount).\
+        filter_by(countid=self.actid).\
+        filter_by(memberid=dbmember.id).\
+        first()
+        
+        if msgcount is None:
+            msgcount = MemberMessageCount(countid=self.actid, memberid=dbmember.id, msgcount=0)
+            db.add(msgcount)
+            
+        msgcount.msgcount += 1
+        db.commit()
     
 Base.metadata.create_all(engine)

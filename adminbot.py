@@ -8,8 +8,13 @@ if len(sys.argv) == 1:
 token = sys.argv[1]
 
 from adminlog import adminbot, AdminLogger
-from adminlog.schema import Session
-db_session = Session()
+from adminlog.classes import RuleRepo
+from adminlog.schema import listeners, Session
 
-adminlogger = AdminLogger(db_session)
+db = Session()
+repo = RuleRepo(db, adminbot)
+adminlogger = AdminLogger(db)
+for listener in listeners:
+    listener().register_listeners(adminbot, db)
+
 adminbot.run(token)
