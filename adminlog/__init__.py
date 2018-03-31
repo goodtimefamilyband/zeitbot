@@ -86,18 +86,7 @@ class AdminLogger(Logger):
             print("***admin_check***", ctx.message.content, ctx.message.channel.permissions_for(ctx.message.author).administrator)
             return ctx.message.channel.permissions_for(ctx.message.author).administrator
         
-        @self.client.group(pass_context=True)
-        async def addcondition(ctx):
-            pass
-            
-        @self.client.group(pass_context=True)
-        async def test(ctx, *args):
-            print("test[ctx={}, args={}]".format(ctx, args))
         
-        
-        @self.client.event
-        async def on_ready():
-            pass
             '''
             print('Logged in as', self.client.user.name)
             

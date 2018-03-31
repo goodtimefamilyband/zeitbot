@@ -9,7 +9,7 @@ import sys
 #import sqlalchemy
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.ext.declarative import declarative_base, declared_attr
 from sqlalchemy import Column, ForeignKey, Integer, String, Date, Float, Boolean
 
 import sys
@@ -24,6 +24,7 @@ listeners = []
 
 def listener(cls):
     listeners.append(cls)
+    return cls
 
 def get_db_member(db, member):
     member = db.query(Member).filter_by(id=member.id).filter_by(serverid=member.server.id).first()
@@ -34,11 +35,26 @@ def get_db_member(db, member):
         
     return member
     
+class CondIdMixin:
+    
+    @declared_attr
+    def condid(self):
+        return Column(Integer, ForeignKey('conditions.id', onupdate="CASCADE", ondelete="CASCADE"), primary_key=True)
+        
+class ServerIdMixin:
+    
+    @declared_attr
+    def serverid(self):
+        return Column(String, ForeignKey('servers.id'))
+    
 class CommandListener:
-    def register_listeners(self, bot, db):
+    def register_listeners(self, bot, db, addgrp=None, testgrp=None):
         pass
         
-class Condition(CommandListener):
+    def __str__(self):
+        return type(self).__name__
+        
+class Condition(CommandListener, CondIdMixin):
     
     addcommand = "addcondition"
     testcommand = "test"
@@ -46,9 +62,10 @@ class Condition(CommandListener):
     async def evaluate(self, db, bot, *args, **kwargs):
         return False
         
-    def add_condition_entry(self, db):
-        condentry = ConditionEntry(condclass=type(self).__name__)
+    def add_condition_entry(self, db, event=None):
+        condentry = ConditionEntry(entryclass=type(self).__name__, entrymod=self.__module__, event=event)
         db.add(condentry)
+        db.commit()
         return condentry
         
 class Action(CommandListener):
@@ -62,7 +79,7 @@ class Action(CommandListener):
         actentry = ActionEntry(actclass=type(self).__name__)
         db.add(actentry)
         return actentry
-
+        
 #TODO: use object_session() (or similar)?
 
 class Server(Base):
@@ -78,12 +95,11 @@ class Server(Base):
 
 
 #TODO: Inherit from this? How to instantiate?    
-class Rule(Base):
+class Rule(Base, CondIdMixin):
     __tablename__ = "rules"
     
     id = Column(Integer, primary_key=True)
     serverid = Column(String, ForeignKey('servers.id'))
-    condid = Column(Integer)
     event = Column(String)
     
 class Member(Base):
@@ -116,10 +132,12 @@ class ConditionEntry(Base):
     __tablename__ = "conditions"
     
     id = Column(Integer, primary_key=True)
-    condclass = Column(String, nullable=False)
+    entryclass = Column(String, nullable=False)
+    entrymod = Column(String, nullable=False)
+    event = Column(String)
     
-    def load_condition(self, db, mod):
-        entryclass = getattr(mod, self.condclass)
+    def load_condition(self, db):
+        entryclass = getattr(sys.modules[self.entrymod], self.entryclass)
         cond = db.query(entryclass).filter_by(condid=self.id).first()
         return cond
     
@@ -134,25 +152,24 @@ class ActionEntry(Base):
 class TrueCondition(Base, Condition):
     __tablename__ = "trueconditions"
     
-    condid = Column(Integer, ForeignKey('conditions.id'), primary_key=True)
-    
     async def evaluate(*args, **kwargs):
         return True
         
-    def register_listeners(self, bot, db):
-        addgrp = bot.get_command(Condition.addcommand)
-        testgrp = bot.get_command(Condition.testcommand)
-        
-        if addgrp.get_command("alwaystrue") is None:
+    def register_listeners(self, bot, db, addgrp=None, testgrp=None):
+        if addgrp is not None and addgrp.get_command("alwaystrue") is None:
             
             @addgrp.command(pass_context=True, no_pm=True)
             async def alwaystrue(ctx):
                 condentry = self.add_condition_entry(db)
+                print(condentry.id, condentry.entryclass, type(TrueCondition))
+                
                 condition = TrueCondition(condid=condentry.id)
                 db.add(condition)
                 db.commit()
                 
-        if testgrp.get_command("alwaystrue") is None:
+                await ctx.bot.send_message(ctx.message.channel, "Added condition ({})".format(condentry.id))
+                
+        if testgrp is not None and testgrp.get_command("alwaystrue") is None:
             
             @testgrp.command(pass_context=True, no_pm=True)
             async def alwaystrue(ctx, condid):
@@ -161,36 +178,44 @@ class TrueCondition(Base, Condition):
                     await ctx.bot.send_message(ctx.message.channel, "Could not find condition with ID " + condid)
                     return
                 
-                result = cond.evaluate()
-                ctx.bot.send_message(ctx.message.channel, "Result: " + result)
+                result = await cond.evaluate()
+                await ctx.bot.send_message(ctx.message.channel, "Result: " + str(result))
                 
 @listener
 class ComplementCondition(Base, Condition):
     __tablename__ = 'complements'
     
-    condid = Column(Integer, ForeignKey('conditions.id'), primary_key=True)
-    target = Column(Integer, ForeignKey('conditions.id'))
+    target = Column(Integer, ForeignKey('conditions.id', onupdate="CASCADE", ondelete="CASCADE"))
     
     async def evaluate(self, db, bot, *args, **kwargs):
         tgtentry = db.query(ConditionEntry).filter_by(id=self.target).first()
-        tgt = tgtentry.load_condition(db, sys.modules[__name__])
+        tgt = tgtentry.load_condition(db)
         res = await tgt.evaluate(db, bot, *args, **kwargs)
         return not res
         
-    def register_listeners(self, bot, db):
-        addgrp = bot.get_command(Condition.addcommand)
-        testgrp = bot.get_command(Condition.testcommand)
-        
-        if addgrp.get_command("opposite") is None:
+    def register_listeners(self, bot, db, addgrp=None, testgrp=None):
+        if addgrp is not None and addgrp.get_command("opposite") is None:
             @addgrp.command(pass_context=True, no_pm=True)
             async def opposite(ctx, target):
-                condentry = self.add_action_entry(db)
-                cond = ComplementCondition(condid=condentry.id, target=int(target))
-                db.add(target)
+                print("opposite", ctx, target)
+                target = int(target)
+                
+                tgtentry = db.query(ConditionEntry).filter_by(id=target).first()
+                if tgtentry is None:
+                    ctx.bot.send_message(ctx.message.channel, "Target condition not found")
+                    return
+                    
+                tgtcond = tgtentry.load_condition(db)
+                
+                condentry = self.add_condition_entry(db, event=tgtentry.event)
+                cond = ComplementCondition(condid=condentry.id, target=target)
+                db.add(cond)
                 db.commit()
                 
+                await ctx.bot.send_message(ctx.message.channel, "Added condition ({})".format(condentry.id))
+                
         # TODO: This should probably handle other types of events
-        if testgrp.get_command("opposite") is None:
+        if testgrp is not None and testgrp.get_command("opposite") is None:
             @testgrp.command(pass_context=True, no_pm=True)
             async def opposite(ctx, condid):
                 cond = db.query(ComplementCondition).filter_by(condid=condid).first()
@@ -198,46 +223,96 @@ class ComplementCondition(Base, Condition):
                     await ctx.bot.send_message(ctx.message.channel, "Could not find condition with ID " + condid)
                     return
                 
-                result = cond.evaluate(db, ctx.bot, msg)
-                ctx.bot.send_message(ctx.message.channel, "Result: " + result)
-        
+                result = await cond.evaluate(db, ctx.bot, ctx.message)
+                await ctx.bot.send_message(ctx.message.channel, "Result: " + str(result))
+                
+    def __str__(self):
+        return "Opposite({})".format(self.target)
+                
+@listener
 class AndCondition(Base, Condition):
     __tablename__ = 'andconditions'
     
-    condid = Column(Integer, ForeignKey('conditions.id'), primary_key=True)
     lhand = Column(Integer, ForeignKey('conditions.id'))
     rhand = Column(Integer, ForeignKey('conditions.id'))
-    
+
     async def evaluate(self, db, bot, *args, **kwargs):
-        lhandentry = db.query(ConditionEntry).filter_by(id=self.lhand)
-        rhandentry = db.query(ConditionEntry).filter_by(id=self.rhand)
+        lhandentry = db.query(ConditionEntry).filter_by(id=self.lhand).first()
+        rhandentry = db.query(ConditionEntry).filter_by(id=self.rhand).first()
         
-        lhandcond = lhandentry.load_condition(db, sys.modules[__name__])
-        rhandcond = rhandentry.load_condition(db, sys.modules[__name__])
+        lhandcond = lhandentry.load_condition(db)
+        rhandcond = rhandentry.load_condition(db)
         
-        return lhandcond.evaluate(self, db, bot, *args, **kwargs) and rhandcond.evaluate(self, db, bot, *args, **kwargs)
+        return await lhandcond.evaluate(db, bot, *args, **kwargs) and await rhandcond.evaluate(db, bot, *args, **kwargs)
+        
+    def register_listeners(self, bot, db, addgrp=None, testgrp=None):
+        if addgrp is not None and addgrp.get_command("andc") is None:
+            
+            @addgrp.command(pass_context=True, no_pm=True)
+            async def andc(ctx, left, right):
+                leftcond = db.query(ConditionEntry).filter_by(id=int(left)).first()
+                if leftcond is None:
+                    return
+                
+                rightcond = db.query(ConditionEntry).filter_by(id=int(right)).first()
+                if rightcond is None:
+                    return
+
+                if leftcond.event != rightcond.event:
+                    await ctx.bot.send_message("Condition event types do not match")
+                    return
+                
+                entry = self.add_condition_entry(db, event=leftcond.event)
+                cond = AndCondition(condid=entry.id, lhand=int(left), rhand=int(right))
+                db.add(cond)
+                db.commit()
+                
+                await ctx.bot.send_message(ctx.message.channel, "Added condition ({})".format(cond.condid))
+                
+        if testgrp is not None and testgrp.get_command("andc") is None:
+            
+            @testgrp.command(pass_context=True, no_pm=True)
+            async def andc(ctx, condid, *args):
+                cond = db.query(AndCondition).filter_by(condid=condid).first()
+                if cond is None:
+                    await ctx.bot.send_message(ctx.message.channel, "Could not find condition with ID " + condid)
+                    return
+                
+                result = await cond.evaluate(db, bot, ctx.message)
+                await ctx.bot.send_message(ctx.message.channel, "Result: " + str(result))
+        
+    # TODO: object_session? what even is that?
+    def __str__(self):
+        #lentry = self.db.query(ConditionEntry).filter_by(id=self.lhand).first()
+        #rentry = self.db.query(ConditionEntry).filter_by(id=self.rhand).first()
+        
+        #lhandcond = lentry.load_condition(db, sys.modules[__name__])
+        #rhandcond = rentry.load_condition(db, sys.modules[__name__])
+        
+        return "({} AND {})".format(self.lhand, self.rhand)
+                
         
 class BlacklistEntry:
     __tablename__ = 'roleblacklist'
     
     roleid = Column(String, ForeignKey('roles.id'), primary_key=True)
     memberid = Column(String, ForeignKey('members.id'), primary_key=True)
-        
+
+
 class RoleBlacklist(Base, Condition):
     __tablename__ = 'roleblacklistcond'
     
-    condid = Column(Integer, ForeignKey('conditions.id'), primary_key=True)
     roleid = Column(String, ForeignKey('roles.id'), primary_key=True)
     
     async def evaluate(self, db, bot, msg):
         blentry = db.query(BlacklistEntry).filter_by(roleid=self.roleid).filter_by(memberid=msg.author.id).first()
         return blentry is None
     
+
 class MemberMessageQuota(Base, Condition):
 
     __tablename__ = "msgquotas"
 
-    condid = Column(Integer, ForeignKey('conditions.id'), primary_key=True)
     countid = Column(Integer, ForeignKey('membermessagecounters.actid'))
     count = Column(Integer, nullable=False)
     serverid = Column(String, ForeignKey('servers.id'))
@@ -251,10 +326,10 @@ class MemberMessageQuota(Base, Condition):
         
         return count is None
         
+
 class RoleChecker(Base, Condition):
     __tablename__ = "rolecheckers"
     
-    condid = Column(Integer, ForeignKey('conditions.id'), primary_key=True)
     roleid = Column(String, ForeignKey('roles.id'))
     
     async def evaluate(self, db, bot, msg):

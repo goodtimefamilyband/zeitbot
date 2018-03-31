@@ -9,12 +9,11 @@ token = sys.argv[1]
 
 from adminlog import adminbot, AdminLogger
 from adminlog.classes import RuleRepo
-from adminlog.schema import listeners, Session
+from adminlog.schema import Session
 
 db = Session()
 repo = RuleRepo(db, adminbot)
+repo.register_commands()
 adminlogger = AdminLogger(db)
-for listener in listeners:
-    listener().register_listeners(adminbot, db)
 
 adminbot.run(token)
