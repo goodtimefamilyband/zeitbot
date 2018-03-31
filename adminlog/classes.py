@@ -3,7 +3,7 @@ import discord
 from collections import defaultdict
 
 from . import schema
-from .schema import listeners, ConditionEntry, ActionEntry, Rule
+from .schema import listeners, ConditionEntry, ActionEntry, Rule, Condition, Action
 
 '''
 class Condition:
@@ -46,9 +46,20 @@ class RuleRepo:
         @self.bot.group(pass_context=True)
         async def test(ctx):
             print("test[ctx={}]".format(ctx))
+
+        @self.bot.group(pass_context=True)
+        async def adda(ctx):
+            pass
         
         for listener in listeners:
-            listener().register_listeners(self.bot, self.db, addgrp=addc, testgrp=test)
+            addgrp = None
+
+            if issubclass(listener, Condition):
+                addgrp = addc
+            elif issubclass(listener, Action):
+                addgrp = adda
+
+            listener().register_listeners(self.bot, self.db, addgrp=addgrp, testgrp=test)
         
         @self.bot.event
         async def on_ready():
@@ -83,7 +94,11 @@ class RuleRepo:
                 await ctx.bot.send_message(ctx.message.channel, "No condition with that ID")
                 return
                 
-            r = Rule(condid=int(condid), serverid=ctx.message.serverid, event="onmessage")
+            r = Rule(condid=int(condid), serverid=ctx.message.serverid)
+            self.db.add(r)
+            self.db.commit()
+
+            await ctx.bot.send_message(ctx.message.channel, "Rule added ({})".format(r.id))
             
 # TODO: Create initializer class/function, move to schema                    
 # repo = RuleRepo(schema.Session(), __init__.adminbot)

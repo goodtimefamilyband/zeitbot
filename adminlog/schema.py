@@ -34,13 +34,22 @@ def get_db_member(db, member):
         db.commit()
         
     return member
-    
+
+
 class CondIdMixin:
     
     @declared_attr
     def condid(self):
         return Column(Integer, ForeignKey('conditions.id', onupdate="CASCADE", ondelete="CASCADE"), primary_key=True)
-        
+
+
+class ActIdMixin:
+
+    @declared_attr
+    def actid(self):
+        return Column(Integer, ForeignKey('conditions.id', onupdate="CASCADE", ondelete="CASCADE"), primary_key=True)
+
+
 class ServerIdMixin:
     
     @declared_attr
@@ -100,8 +109,8 @@ class Rule(Base, CondIdMixin):
     
     id = Column(Integer, primary_key=True)
     serverid = Column(String, ForeignKey('servers.id'))
-    event = Column(String)
-    
+
+
 class Member(Base):
     __tablename__ = "members"
     
@@ -109,13 +118,15 @@ class Member(Base):
     serverid = Column(String, ForeignKey('servers.id'), primary_key=True)
     name = Column(String)
 
+
 class MemberMessageCount(Base):
     __tablename__ = "membermessagecounts"
 
     countid = Column(Integer, ForeignKey('membermessagecounters.actid'), primary_key=True)
     memberid = Column(String, ForeignKey("members.id"), primary_key=True)
     msgcount = Column(Integer, default=0)
-    
+
+
 class Role(Base):
     __tablename__ = "roles"
     
@@ -125,7 +136,6 @@ class Role(Base):
     
     def find_discord_role(self, server):
         return discord.utils.find(lambda r : r.id == self.id, server.roles)
-        
         
 
 class ConditionEntry(Base):
@@ -228,7 +238,8 @@ class ComplementCondition(Base, Condition):
                 
     def __str__(self):
         return "Opposite({})".format(self.target)
-                
+
+
 @listener
 class AndCondition(Base, Condition):
     __tablename__ = 'andconditions'
@@ -283,11 +294,11 @@ class AndCondition(Base, Condition):
         
     # TODO: object_session? what even is that?
     def __str__(self):
-        #lentry = self.db.query(ConditionEntry).filter_by(id=self.lhand).first()
-        #rentry = self.db.query(ConditionEntry).filter_by(id=self.rhand).first()
+        # lentry = self.db.query(ConditionEntry).filter_by(id=self.lhand).first()
+        # rentry = self.db.query(ConditionEntry).filter_by(id=self.rhand).first()
         
-        #lhandcond = lentry.load_condition(db, sys.modules[__name__])
-        #rhandcond = rentry.load_condition(db, sys.modules[__name__])
+        # lhandcond = lentry.load_condition(db, sys.modules[__name__])
+        # rhandcond = rentry.load_condition(db, sys.modules[__name__])
         
         return "({} AND {})".format(self.lhand, self.rhand)
                 
