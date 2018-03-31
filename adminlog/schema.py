@@ -47,7 +47,7 @@ class ActIdMixin:
 
     @declared_attr
     def actid(self):
-        return Column(Integer, ForeignKey('conditions.id', onupdate="CASCADE", ondelete="CASCADE"), primary_key=True)
+        return Column(Integer, ForeignKey('actions.id', onupdate="CASCADE", ondelete="CASCADE"), primary_key=True)
 
 
 class ServerIdMixin:
