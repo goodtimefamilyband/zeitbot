@@ -22,9 +22,27 @@ Session = sessionmaker(bind=engine)
 
 listeners = []
 
+
 def listener(cls):
     listeners.append(cls)
     return cls
+
+
+class EntryFactory:
+
+    def __init__(self, entrycls):
+        self.cls = entrycls
+
+    def __call__(self, cls, *args, **kwargs):
+        class NewFactory(cls):
+            def add_entry(this, db, event=None):
+                entry = self.cls(entryclass=type(this).__name__, entrymod=this.__module__, event=event)
+                db.add(entry)
+                db.commit()
+                return entry
+
+        return NewFactory
+
 
 def get_db_member(db, member):
     member = db.query(Member).filter_by(id=member.id).filter_by(serverid=member.server.id).first()
@@ -34,6 +52,40 @@ def get_db_member(db, member):
         db.commit()
         
     return member
+
+
+class EntryMixIn:
+
+    @declared_attr
+    def id(self):
+        return Column(Integer, primary_key=True)
+
+    @declared_attr
+    def entryclass(self):
+        return Column(String, nullable=False)
+
+    @declared_attr
+    def entrymod(self):
+        return Column(String, nullable=False)
+
+    @declared_attr
+    def event(self):
+        return Column(String)
+
+    def load_instance(self, db):
+        entrycls = getattr(sys.modules[self.entrymod], self.entryclass)
+        inst = db.query(entrycls).filter_by(condid=self.id).first()
+        return inst
+
+
+class ConditionEntry(Base, EntryMixIn):
+    __tablename__ = "conditions"
+
+
+class ActionEntry(Base, EntryMixIn):
+    __tablename__ = "actions"
+
+    ruleid = Column(Integer, ForeignKey('rules.id', onupdate="CASCADE", ondelete="SET NULL"))
 
 
 class CondIdMixin:
@@ -55,14 +107,17 @@ class ServerIdMixin:
     @declared_attr
     def serverid(self):
         return Column(String, ForeignKey('servers.id'))
-    
+
+
 class CommandListener:
     def register_listeners(self, bot, db, addgrp=None, testgrp=None):
         pass
         
     def __str__(self):
         return type(self).__name__
-        
+
+
+@EntryFactory(entrycls=ConditionEntry)
 class Condition(CommandListener, CondIdMixin):
     
     addcommand = "addcondition"
@@ -70,27 +125,18 @@ class Condition(CommandListener, CondIdMixin):
     
     async def evaluate(self, db, bot, *args, **kwargs):
         return False
-        
-    def add_condition_entry(self, db, event=None):
-        condentry = ConditionEntry(entryclass=type(self).__name__, entrymod=self.__module__, event=event)
-        db.add(condentry)
-        db.commit()
-        return condentry
-        
-class Action(CommandListener):
+
+
+@EntryFactory(entrycls=ActionEntry)
+class Action(CommandListener, ActIdMixin):
     
     addcommand = "addaction"
 
     async def perform(self, db, bot, *args, **kwargs):
         pass
-        
-    def add_action_entry(self, db):
-        actentry = ActionEntry(actclass=type(self).__name__)
-        db.add(actentry)
-        return actentry
-        
-#TODO: use object_session() (or similar)?
 
+
+# TODO: use object_session() (or similar)?
 class Server(Base):
     __tablename__ = "servers"
     
@@ -103,12 +149,15 @@ class Server(Base):
             rule.load_rule(bot, db)
 
 
-#TODO: Inherit from this? How to instantiate?    
+# TODO: Inherit from this? How to instantiate?
 class Rule(Base, CondIdMixin):
     __tablename__ = "rules"
     
     id = Column(Integer, primary_key=True)
     serverid = Column(String, ForeignKey('servers.id'))
+
+    def __str__(self):
+        return "{} (Condition: {})".format(self.id, self.condid)
 
 
 class Member(Base):
@@ -117,14 +166,6 @@ class Member(Base):
     id = Column(String, primary_key=True)
     serverid = Column(String, ForeignKey('servers.id'), primary_key=True)
     name = Column(String)
-
-
-class MemberMessageCount(Base):
-    __tablename__ = "membermessagecounts"
-
-    countid = Column(Integer, ForeignKey('membermessagecounters.actid'), primary_key=True)
-    memberid = Column(String, ForeignKey("members.id"), primary_key=True)
-    msgcount = Column(Integer, default=0)
 
 
 class Role(Base):
@@ -136,27 +177,7 @@ class Role(Base):
     
     def find_discord_role(self, server):
         return discord.utils.find(lambda r : r.id == self.id, server.roles)
-        
 
-class ConditionEntry(Base):
-    __tablename__ = "conditions"
-    
-    id = Column(Integer, primary_key=True)
-    entryclass = Column(String, nullable=False)
-    entrymod = Column(String, nullable=False)
-    event = Column(String)
-    
-    def load_condition(self, db):
-        entryclass = getattr(sys.modules[self.entrymod], self.entryclass)
-        cond = db.query(entryclass).filter_by(condid=self.id).first()
-        return cond
-    
-class ActionEntry(Base):
-    __tablename__ = "actions"
-    
-    id = Column(Integer, primary_key=True)
-    ruleid = Column(Integer, ForeignKey('rules.id'))
-    actclass = Column(String, nullable=False)
     
 @listener
 class TrueCondition(Base, Condition):
@@ -170,7 +191,7 @@ class TrueCondition(Base, Condition):
             
             @addgrp.command(pass_context=True, no_pm=True)
             async def alwaystrue(ctx):
-                condentry = self.add_condition_entry(db)
+                condentry = self.add_entry(db)
                 print(condentry.id, condentry.entryclass, type(TrueCondition))
                 
                 condition = TrueCondition(condid=condentry.id)
@@ -191,6 +212,7 @@ class TrueCondition(Base, Condition):
                 result = await cond.evaluate()
                 await ctx.bot.send_message(ctx.message.channel, "Result: " + str(result))
                 
+
 @listener
 class ComplementCondition(Base, Condition):
     __tablename__ = 'complements'
@@ -199,7 +221,7 @@ class ComplementCondition(Base, Condition):
     
     async def evaluate(self, db, bot, *args, **kwargs):
         tgtentry = db.query(ConditionEntry).filter_by(id=self.target).first()
-        tgt = tgtentry.load_condition(db)
+        tgt = tgtentry.load_instance(db)
         res = await tgt.evaluate(db, bot, *args, **kwargs)
         return not res
         
@@ -215,9 +237,9 @@ class ComplementCondition(Base, Condition):
                     ctx.bot.send_message(ctx.message.channel, "Target condition not found")
                     return
                     
-                tgtcond = tgtentry.load_condition(db)
+                tgtcond = tgtentry.load_instance(db)
                 
-                condentry = self.add_condition_entry(db, event=tgtentry.event)
+                condentry = self.add_entry(db, event=tgtentry.event)
                 cond = ComplementCondition(condid=condentry.id, target=target)
                 db.add(cond)
                 db.commit()
@@ -251,8 +273,8 @@ class AndCondition(Base, Condition):
         lhandentry = db.query(ConditionEntry).filter_by(id=self.lhand).first()
         rhandentry = db.query(ConditionEntry).filter_by(id=self.rhand).first()
         
-        lhandcond = lhandentry.load_condition(db)
-        rhandcond = rhandentry.load_condition(db)
+        lhandcond = lhandentry.load_instance(db)
+        rhandcond = rhandentry.load_instance(db)
         
         return await lhandcond.evaluate(db, bot, *args, **kwargs) and await rhandcond.evaluate(db, bot, *args, **kwargs)
         
@@ -273,7 +295,7 @@ class AndCondition(Base, Condition):
                     await ctx.bot.send_message("Condition event types do not match")
                     return
                 
-                entry = self.add_condition_entry(db, event=leftcond.event)
+                entry = self.add_entry(db, event=leftcond.event)
                 cond = AndCondition(condid=entry.id, lhand=int(left), rhand=int(right))
                 db.add(cond)
                 db.commit()
@@ -354,7 +376,7 @@ class RoleAdderRole(Base):
     __tablename__ = 'roleadderroles'
     
     roleid = Column(String, ForeignKey('roles.id'), primary_key=True)
-    actid = actid = Column(Integer, ForeignKey('actions.id'), primary_key=True)
+    actid = Column(Integer, ForeignKey('actions.id'), primary_key=True)
     
 
 class RoleAdder(Base, Action):
@@ -388,13 +410,19 @@ class RoleBlacklister(Base, Action):
         blentry = BlacklistEntry(roleid=self.roleid,memberid=dbmember.id)
         db.add(blentry)
         db.commit()
-        
-        
+
+class MemberMessageCount(Base):
+    __tablename__ = "membermessagecounts"
+
+    countid = Column(Integer, ForeignKey('membermessagecounters.actid'), primary_key=True)
+    memberid = Column(String, ForeignKey("members.id"), primary_key=True)
+    msgcount = Column(Integer, default=0)
+
+
+@listener
 class MemberMessageCounter(Base, Action):
     __tablename__ = "membermessagecounters"
-    
-    actid = Column(Integer, ForeignKey('actions.id'), primary_key=True)
-    
+
     async def perform(self, db, bot, msg):
         dbmember = get_db_member(db, msg.author)
         
@@ -409,5 +437,40 @@ class MemberMessageCounter(Base, Action):
             
         msgcount.msgcount += 1
         db.commit()
+
+    def register_listeners(self, bot, db, addgrp=None, testgrp=None, infogrp=None):
+
+        if addgrp is not None and addgrp.get_command('mmc') is None:
+
+            @addgrp.command(pass_context=True, no_pm=True)
+            async def mmc(ctx):
+                entry = self.add_entry(db, event="on_message")
+                action = MemberMessageCounter(actid=entry.id)
+                db.add(action)
+                db.commit()
+
+                await ctx.bot.send_message(ctx.message.channel, "Action added ({})".format(entry.id))
+
+        if infogrp is not None and infogrp.get_command('mmc') is None:
+
+            @infogrp.command(pass_context=True, no_pm=True)
+            async def mmc(ctx, countid):
+                memberlist = ctx.message.mentions
+                if len(memberlist) == 0:
+                    memberlist = [ctx.message.author]
+
+                memberdict = {}
+                for member in memberlist:
+                    memberdict[member.id] = member
+
+                # TODO: Use WHERE memberid IN(...)
+                inst = db.query(MemberMessageCount).filter_by(actid=int(countid)).first()
+                membercounts = [db.query(MemberMessageCount).
+                                filter_by(countid=inst.actid).
+                                filter_by(memberid=member.id) for member in memberlist]
+
+                msg = "\n".join(['{} {}'.format(memberdict[count.memberid].name, count.msgcount) for count in membercounts])
+                await ctx.bot.send_message(ctx.message.channel, "```{}```".format(msg))
+
     
 Base.metadata.create_all(engine)

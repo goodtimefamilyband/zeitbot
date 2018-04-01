@@ -4,6 +4,7 @@ from collections import defaultdict
 
 from . import schema
 from .schema import listeners, ConditionEntry, ActionEntry, Rule, Condition, Action
+from sqlalchemy.orm import aliased
 
 '''
 class Condition:
@@ -14,20 +15,22 @@ class Action:
     async def __call__(self, *args, **kwargs):
         pass
 '''
-            
+
+
 class RuleRepo:
     def __init__(self, db, client):
         self.db = db
         self.bot = client
             
     async def run_event(self, eventtype, serverid, *args, **kwargs):
-        rules = self.db.query(Rule).filter_by(serverid=serverid).filter_by(event=eventtype)
+        rules = self.db.query(Rule, ConditionEntry).\
+            join(ConditionEntry, Rule.condid == ConditionEntry.id).\
+            filter(Rule.serverid == serverid).\
+            filter(ConditionEntry.event == eventtype)
         
-        #TODO: Use a join instead
-        for rule in rules:
-            condentry = self.db.query(ConditionEntry).filter_by(id=rule.condid).first()
-            condclass = getattr(schema, condentry.entryclass)
-            cond = self.db.query(condclass).filter_by(condid=rule.condid).first()
+        # TODO: Use a join instead
+        for (rule, condentry) in rules:
+            cond = condentry.load_instance(self.db)
             condresult = await cond.evaluate(self.db, self.bot, *args, **kwargs)
             
             if condresult:
@@ -64,14 +67,22 @@ class RuleRepo:
         @self.bot.event
         async def on_ready():
             pass
+
+        async def send_entry_list(ctx, entries):
+            lst = "\n".join(["{} {}".format(entry.id, str(entry.load_instance(self.db))) for entry in entries])
+            msg = "```{}```".format(lst)
+            await ctx.bot.send_message(ctx.message.channel, msg)
         
-        #TODO: Figure out condition server IDs
+        # TODO: Figure out condition server IDs
         @self.bot.command(pass_context=True, no_pm=True)
         async def conditions(ctx):
             entries = self.db.query(ConditionEntry)
-            conds = "\n".join(["{} {}".format(entry.id, str(entry.load_condition(self.db))) for entry in entries])
-            msg = "```{}```".format(conds)
-            await ctx.bot.send_message(ctx.message.channel, msg)
+            await send_entry_list(ctx, entries)
+
+        @self.bot.command(pass_context=True, no_pm=True)
+        async def actions(ctx):
+            entries = self.db.query(ActionEntry)
+            await send_entry_list(ctx, entries)
             
         @self.bot.command(pass_context=True, no_pm=True)
         async def delc(ctx, condid):
@@ -85,7 +96,6 @@ class RuleRepo:
                 msg = "Condition {} deleted".format(condid)
                 
             await ctx.bot.send_message(ctx.message.channel, msg)
-            
 
         @self.bot.command(pass_context=True, no_pm=True)
         async def rule(ctx, condid):
@@ -99,9 +109,54 @@ class RuleRepo:
             self.db.commit()
 
             await ctx.bot.send_message(ctx.message.channel, "Rule added ({})".format(r.id))
+
+        @self.bot.command(pass_context=True, no_pm=True)
+        async def onrule(ctx, ruleid, actionid):
+            rule = self.db.query(Rule).filter_by(id=int(ruleid)).first()
+            if rule is None:
+                return
+
+            aentry = self.db.query(ActionEntry).filter_by(id=int(actionid)).first()
+            if aentry is None:
+                return
+
+            aentry.ruleid = rule.id
+            self.db.commit()
+
+            await ctx.bot.send_message(ctx.message.channel, "Success")
+
+        @self.bot.command(pass_context=True, no_pm=True)
+        async def rules(ctx):
+            rules = self.db.query(Rule).filter_by(serverid=ctx.message.server.id)
+            rulestr = "\n".join([str(rule) for rule in rules])
+            await ctx.bot.send_message("```{}```".format(rulestr))
+
+        @self.bot.command(pass_context=True, no_pm=True)
+        async def ruledesc(ctx, ruleid):
+            rule = self.db.query(Rule).filter_by(id=int(ruleid)).first()
+            if rule is None:
+                await ctx.bot.send_message(ctx.message.channel, "No rule by that ID")
+
+            condentry = self.db.query(ConditionEntry).filter_by(id=rule.condid).first()
+            cond = str(condentry.load_instance(self.db))
+
+            actentries = self.db.query(ActionEntry).filter_by(ruleid=rule.id)
+            actions = [str(actentry.load_instance(self.db)) for actentry in actentries]
+
+            msg = "RULE {}\n".format(rule.id)
+            msg += "Condition: {}\n".format(cond)
+            msg += "Actions:\n"
+            msg += "\n".join(actions)
+
+            await ctx.bot.send_message(ctx.message.channel, "```{}```".format(msg))
+
+        @self.bot.listen()
+        async def on_message(msg):
+            if msg.server is None:
+                return
+
+            await self.run_event("on_message", msg.server.id, msg)
             
-# TODO: Create initializer class/function, move to schema                    
-# repo = RuleRepo(schema.Session(), __init__.adminbot)
 
 '''            
 class MessageCountCondition(Condition):
