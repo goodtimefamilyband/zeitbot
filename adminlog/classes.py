@@ -4,7 +4,7 @@ from collections import defaultdict
 
 from . import schema
 from .schema import listeners, ConditionEntry, ActionEntry, Rule, Condition, Action
-from sqlalchemy.orm import aliased
+from sqlalchemy import or_
 
 '''
 class Condition:
@@ -26,18 +26,20 @@ class RuleRepo:
         rules = self.db.query(Rule, ConditionEntry).\
             join(ConditionEntry, Rule.condid == ConditionEntry.id).\
             filter(Rule.serverid == serverid).\
-            filter(ConditionEntry.event == eventtype)
+            filter(or_(ConditionEntry.event == eventtype, ConditionEntry.event == None))
         
         # TODO: Use a join instead
         for (rule, condentry) in rules:
+            print(rule, condentry)
             cond = condentry.load_instance(self.db)
             condresult = await cond.evaluate(self.db, self.bot, *args, **kwargs)
             
             if condresult:
                 actentries = self.db.query(ActionEntry).filter_by(ruleid=rule.id)
                 for actentry in actentries:
-                    actclass = getattr(schema, actentry.actclass)
-                    action = self.db.query(actclass).filter_by(actionid=actentry.id).first()
+                    # actclass = getattr(schema, actentry.actclass)
+                    action = actentry.load_instance(self.db)
+                    # self.db.query(actclass).filter_by(actionid=actentry.id).first()
                     self.bot.loop.create_task(action.perform(self.db, self.bot, *args, **kwargs))
                     
     def register_commands(self):
@@ -53,7 +55,11 @@ class RuleRepo:
         @self.bot.group(pass_context=True)
         async def adda(ctx):
             pass
-        
+
+        @self.bot.group(pass_context=True)
+        async def info(ctx):
+            pass
+
         for listener in listeners:
             addgrp = None
 
@@ -62,7 +68,7 @@ class RuleRepo:
             elif issubclass(listener, Action):
                 addgrp = adda
 
-            listener().register_listeners(self.bot, self.db, addgrp=addgrp, testgrp=test)
+            listener().register_listeners(self.bot, self.db, addgrp=addgrp, testgrp=test, infogrp=info)
         
         @self.bot.event
         async def on_ready():
@@ -104,7 +110,7 @@ class RuleRepo:
                 await ctx.bot.send_message(ctx.message.channel, "No condition with that ID")
                 return
                 
-            r = Rule(condid=int(condid), serverid=ctx.message.serverid)
+            r = Rule(condid=int(condid), serverid=ctx.message.server.id)
             self.db.add(r)
             self.db.commit()
 
@@ -129,7 +135,7 @@ class RuleRepo:
         async def rules(ctx):
             rules = self.db.query(Rule).filter_by(serverid=ctx.message.server.id)
             rulestr = "\n".join([str(rule) for rule in rules])
-            await ctx.bot.send_message("```{}```".format(rulestr))
+            await ctx.bot.send_message(ctx.message.channel, "```{}```".format(rulestr))
 
         @self.bot.command(pass_context=True, no_pm=True)
         async def ruledesc(ctx, ruleid):

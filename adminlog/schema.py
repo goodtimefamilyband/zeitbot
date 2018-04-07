@@ -8,12 +8,13 @@ import sys
 
 #import sqlalchemy
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, aliased
 from sqlalchemy.ext.declarative import declarative_base, declared_attr
 from sqlalchemy import Column, ForeignKey, Integer, String, Date, Float, Boolean
 
 import sys
 import discord
+from discord.ext import commands
 
 Base = declarative_base()
 engine = create_engine(SQLALCHEMY_DATABASE_URI, echo=SQL_DEBUG)
@@ -45,13 +46,27 @@ class EntryFactory:
 
 
 def get_db_member(db, member):
-    member = db.query(Member).filter_by(id=member.id).filter_by(serverid=member.server.id).first()
-    if member is None:
-        member = Member(id=member.id, serverid=member.server.id, name=member.name)
-        db.add(member)
+    dbmember = db.query(Member).filter_by(id=member.id).filter_by(serverid=member.server.id).first()
+    if dbmember is None:
+        dbmember = Member(id=member.id, serverid=member.server.id, name=member.name)
+        db.add(dbmember)
         db.commit()
         
-    return member
+    return dbmember
+
+def get_db_roles(db, *roles):
+    dbroles = []
+    for role in roles:
+        dbrole = db.query(Role).filter_by(id=role.id).filter_by(serverid=role.server.id).first()
+        if dbrole is None:
+            dbrole = Role(id=role.id, serverid=role.server.id, name=role.name)
+            db.add(dbrole)
+            db.commit()
+
+        dbroles.append(dbrole)
+
+    return dbroles
+
 
 
 class EntryMixIn:
@@ -73,8 +88,18 @@ class EntryMixIn:
         return Column(String)
 
     def load_instance(self, db):
+
         entrycls = getattr(sys.modules[self.entrymod], self.entryclass)
-        inst = db.query(entrycls).filter_by(condid=self.id).first()
+
+        # TODO: Make this not stupid
+        if issubclass(entrycls, Condition):
+            argkey = "condid"
+        elif issubclass(entrycls, Action):
+            argkey = "actid"
+
+        kwargs = {}
+        kwargs[argkey] = self.id
+        inst = db.query(entrycls).filter_by(**kwargs).first()
         return inst
 
 
@@ -110,7 +135,7 @@ class ServerIdMixin:
 
 
 class CommandListener:
-    def register_listeners(self, bot, db, addgrp=None, testgrp=None):
+    def register_listeners(self, bot, db, addgrp=None, testgrp=None, infogrp=None):
         pass
         
     def __str__(self):
@@ -125,6 +150,15 @@ class Condition(CommandListener, CondIdMixin):
     
     async def evaluate(self, db, bot, *args, **kwargs):
         return False
+
+    async def testmsg(self, db, ctx, cls, condid):
+        cond = db.query(cls).filter_by(condid=condid).first()
+        if cond is None:
+            await ctx.bot.send_message(ctx.message.channel, "Could not find condition with ID " + condid)
+            return
+
+        result = await cond.evaluate(db, ctx.bot, ctx.message)
+        await ctx.bot.send_message(ctx.message.channel, "Result: " + str(result))
 
 
 @EntryFactory(entrycls=ActionEntry)
@@ -155,6 +189,7 @@ class Rule(Base, CondIdMixin):
     
     id = Column(Integer, primary_key=True)
     serverid = Column(String, ForeignKey('servers.id'))
+    condid = Column(Integer, ForeignKey('conditions.id', onupdate="CASCADE", ondelete="CASCADE"))
 
     def __str__(self):
         return "{} (Condition: {})".format(self.id, self.condid)
@@ -186,7 +221,7 @@ class TrueCondition(Base, Condition):
     async def evaluate(*args, **kwargs):
         return True
         
-    def register_listeners(self, bot, db, addgrp=None, testgrp=None):
+    def register_listeners(self, bot, db, addgrp=None, testgrp=None, **kwargs):
         if addgrp is not None and addgrp.get_command("alwaystrue") is None:
             
             @addgrp.command(pass_context=True, no_pm=True)
@@ -225,7 +260,7 @@ class ComplementCondition(Base, Condition):
         res = await tgt.evaluate(db, bot, *args, **kwargs)
         return not res
         
-    def register_listeners(self, bot, db, addgrp=None, testgrp=None):
+    def register_listeners(self, bot, db, addgrp=None, testgrp=None, **kwargs):
         if addgrp is not None and addgrp.get_command("opposite") is None:
             @addgrp.command(pass_context=True, no_pm=True)
             async def opposite(ctx, target):
@@ -278,7 +313,7 @@ class AndCondition(Base, Condition):
         
         return await lhandcond.evaluate(db, bot, *args, **kwargs) and await rhandcond.evaluate(db, bot, *args, **kwargs)
         
-    def register_listeners(self, bot, db, addgrp=None, testgrp=None):
+    def register_listeners(self, bot, db, addgrp=None, testgrp=None, **kwargs):
         if addgrp is not None and addgrp.get_command("andc") is None:
             
             @addgrp.command(pass_context=True, no_pm=True)
@@ -323,42 +358,7 @@ class AndCondition(Base, Condition):
         # rhandcond = rentry.load_condition(db, sys.modules[__name__])
         
         return "({} AND {})".format(self.lhand, self.rhand)
-                
-        
-class BlacklistEntry:
-    __tablename__ = 'roleblacklist'
-    
-    roleid = Column(String, ForeignKey('roles.id'), primary_key=True)
-    memberid = Column(String, ForeignKey('members.id'), primary_key=True)
 
-
-class RoleBlacklist(Base, Condition):
-    __tablename__ = 'roleblacklistcond'
-    
-    roleid = Column(String, ForeignKey('roles.id'), primary_key=True)
-    
-    async def evaluate(self, db, bot, msg):
-        blentry = db.query(BlacklistEntry).filter_by(roleid=self.roleid).filter_by(memberid=msg.author.id).first()
-        return blentry is None
-    
-
-class MemberMessageQuota(Base, Condition):
-
-    __tablename__ = "msgquotas"
-
-    countid = Column(Integer, ForeignKey('membermessagecounters.actid'))
-    count = Column(Integer, nullable=False)
-    serverid = Column(String, ForeignKey('servers.id'))
-    
-    async def evaluate(self, db, bot, msg):
-        dbmember = get_db_member(db, msg.author)
-        mc_alias = aliased(MemberMessageCount)
-        count = db.query(Member).join(mc_alias, Member.id == mc_alias.memberid).\
-        filter(mc_alias.msgcount >= self.count).\
-        filter(Member.id == dbmember.id).first()
-        
-        return count is None
-        
 
 class RoleChecker(Base, Condition):
     __tablename__ = "rolecheckers"
@@ -367,11 +367,12 @@ class RoleChecker(Base, Condition):
     
     async def evaluate(self, db, bot, msg):
         for role in msg.author.roles:
-            if role.id == this.roleid:
+            if role.id == self.roleid:
                 return True
                 
         return False
         
+
 class RoleAdderRole(Base):
     __tablename__ = 'roleadderroles'
     
@@ -398,11 +399,52 @@ class RoleAdder(Base, Action):
         rolestoadd = [r.find_discord_role(servers[r.serverid]) in roles]
         if len(rolestoadd) > 0:
             await bot.add_roles(msg.author, *rolestoadd)
-        
+
+
+class BlacklistEntry(Base):
+    __tablename__ = 'roleblacklist'
+
+    roleid = Column(String, ForeignKey('roles.id'), primary_key=True)
+    memberid = Column(String, ForeignKey('members.id'), primary_key=True)
+
+
+def has_role_mentions(ctx):
+    return len(ctx.message.role_mentions) > 0
+
+
+@listener
+class RoleBlacklist(Base, Condition):
+    __tablename__ = 'roleblacklistcond'
+
+    roleid = Column(String, ForeignKey('roles.id'))
+
+    async def evaluate(self, db, bot, msg):
+        blentry = db.query(BlacklistEntry).filter_by(roleid=self.roleid).filter_by(memberid=msg.author.id).first()
+        return blentry is None
+
+    def register_listeners(self, bot, db, addgrp=None, testgrp=None, infogrp=None):
+        if addgrp is not None and addgrp.get_command("rblc") is None:
+            @commands.check(has_role_mentions)
+            @addgrp.command(pass_context=True, no_pm=True)
+            async def rblc(ctx, *roles):
+                dbroles = get_db_roles(db, ctx.message.role_mentions[0])
+                entry = self.add_entry(db, event="on_message")
+                cond = RoleBlacklist(condid=entry.id, roleid=dbroles[0].id)
+                db.add(cond)
+                db.commit()
+
+                await ctx.bot.send_message(ctx.message.channel, "Condition added ({})".format(entry.id))
+
+        if testgrp is not None and testgrp.get_command("rblc") is None:
+            @testgrp.command(pass_context=True, no_pm=True)
+            async def rblc(ctx, condid):
+                await self.testmsg(db, ctx, RoleBlacklist, condid)
+
+
+@listener
 class RoleBlacklister(Base, Action):
     __tablename__ = "blacklisters"
     
-    actid = Column(Integer, ForeignKey('actions.id'), primary_key=True)
     roleid = Column(String, ForeignKey('roles.id'))
     
     async def perform(self, db, bot, msg):
@@ -410,6 +452,36 @@ class RoleBlacklister(Base, Action):
         blentry = BlacklistEntry(roleid=self.roleid,memberid=dbmember.id)
         db.add(blentry)
         db.commit()
+
+    def register_listeners(self, bot, db, addgrp=None, testgrp=None, infogrp=None):
+        if addgrp is not None and addgrp.get_command('rbla') is None:
+            @addgrp.command(pass_context=True, no_pm=True)
+            @commands.check(has_role_mentions)
+            async def rbla(ctx, *roles):
+                dbroles = get_db_roles(db, ctx.message.role_mentions[0])
+                entry = self.add_entry(db, event="on_message")
+                act = RoleBlacklister(actid=entry.id, roleid=dbroles[0].id)
+                db.add(act)
+                db.commit()
+
+                await ctx.bot.send_message(ctx.message.channel, "Action added ({})".format(entry.id))
+
+        if infogrp is not None and infogrp.get_command('rbla') is None:
+            @infogrp.command(pass_context=True, no_pm=True)
+            async def rbla(ctx, actid, *args):
+                act = db.query(RoleBlacklister).filter_by(actid=int(actid)).first()
+
+                members = ctx.message.mentions
+                if len(members) == 0:
+                    members = [ctx.message.author]
+
+                bls = []
+                for member in members:
+                    bls.append((member, db.query(BlacklistEntry).filter_by(memberid=member.id).filter_by(roleid=act.roleid).first()))
+
+                msg = "\n".join(["{}: {}".format(m.name, "N" if bl is None else "Y") for (m, bl) in bls])
+                await ctx.bot.send_message(ctx.message.channel, "``` {} ```".format(msg))
+
 
 class MemberMessageCount(Base):
     __tablename__ = "membermessagecounts"
@@ -464,13 +536,48 @@ class MemberMessageCounter(Base, Action):
                     memberdict[member.id] = member
 
                 # TODO: Use WHERE memberid IN(...)
-                inst = db.query(MemberMessageCount).filter_by(actid=int(countid)).first()
+                inst = db.query(MemberMessageCounter).filter_by(actid=int(countid)).first()
                 membercounts = [db.query(MemberMessageCount).
                                 filter_by(countid=inst.actid).
-                                filter_by(memberid=member.id) for member in memberlist]
+                                filter_by(memberid=member.id).first() for member in memberlist]
 
-                msg = "\n".join(['{} {}'.format(memberdict[count.memberid].name, count.msgcount) for count in membercounts])
+                msg = "\n".join(['{} {}'.format(memberdict[count.memberid].name, count.msgcount) for count in membercounts if count is not None])
                 await ctx.bot.send_message(ctx.message.channel, "```{}```".format(msg))
 
-    
+
+@listener
+class MemberMessageQuota(Base, Condition):
+    __tablename__ = "msgquotas"
+
+    countid = Column(Integer, ForeignKey('membermessagecounters.actid'))
+    count = Column(Integer, nullable=False)
+
+    async def evaluate(self, db, bot, msg):
+        dbmember = get_db_member(db, msg.author)
+        mc_alias = aliased(MemberMessageCount)
+        count = db.query(Member).join(mc_alias, Member.id == mc_alias.memberid). \
+            filter(mc_alias.msgcount >= self.count). \
+            filter(Member.id == dbmember.id). \
+            filter(Member.serverid == dbmember.serverid). \
+            first()
+
+        return count is not None
+
+    def register_listeners(self, bot, db, addgrp=None, testgrp=None, infogrp=None):
+        if addgrp is not None and addgrp.get_command('mmq') is None:
+            @addgrp.command(pass_context=True, no_pm=True)
+            async def mmq(ctx, countid, count):
+                entry = self.add_entry(db, event='on_message')
+                cond = MemberMessageQuota(condid=entry.id, countid=int(countid), count=int(count))
+                db.add(cond)
+                db.commit()
+
+                await ctx.bot.send_message(ctx.message.channel, "Condition added ({})".format(entry.id))
+
+        if testgrp is not None and testgrp.get_command('mmq') is None:
+            @testgrp.command(pass_context=True, no_pm=True)
+            async def mmq(ctx, condid):
+                await self.testmsg(db, ctx, MemberMessageQuota, condid)
+
+
 Base.metadata.create_all(engine)
