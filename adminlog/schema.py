@@ -170,11 +170,6 @@ class Server(Base):
     
     id = Column(String, primary_key=True)
     after = Column(Float)
-    
-    def load_rules(self, bot, db):
-        self.ruleset = db.query(Rule).filter_by(serverid=self.id).all()
-        for rule in self.ruleset:
-            rule.load_rule(bot, db)
 
 
 # TODO: Inherit from this? How to instantiate?
