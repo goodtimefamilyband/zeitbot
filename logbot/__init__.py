@@ -190,11 +190,19 @@ class DiscreteLogbot(Logbot):
         
         self.after = init_time
         self.before = None
+        self.next_after = None
+
+        self.has_run = False
+
+        @self.listen()
+        async def on_message(message):
+            self.next_after = time.mktime(message.timestamp.timetuple())
         
     def get_logs(self, channel):
         return self.logs_from(channel, before=datetime.fromtimestamp(self.before), after=datetime.fromtimestamp(self.after))
 
     async def process_loop(self):
         self.before = time.time()
+        self.next_after = self.before
         await super().process_loop()
-        self.after = self.before
+        self.after = self.next_after

@@ -4,8 +4,6 @@ from .classes import RuleRepo
 from .schema import Config
 
 adminbot = DiscreteLogbot(command_prefix='a.')
-# adminbot = commands.Bot(command_prefix='a.')
-
 
 @adminbot.logger
 class AdminLogger(Logger):
@@ -19,20 +17,15 @@ class AdminLogger(Logger):
 
     def process_message(self, msg):
         self.client.loop.create_task(self.repo.run_event("on_message", msg.server.id, msg))
+        self.update_after(time.mktime(msg.timestamp.timetuple()))
         
     def after_update(self):
-        self.update_after(self.client.before)
+        print("after_update")
+        self.update_after(self.client.next_after)
 
     def update_after(self, after):
         self.conf.init_time = after
         self.db.commit()
         
     def register_commands(self):
-
         self.repo.register_commands()
-
-        @self.client.listen()
-        async def on_message(msg):
-            # client.after = client.before once loop is done
-            self.client.before = time.mktime(msg.timestamp.timetuple())
-            self.update_after(self.client.before)
