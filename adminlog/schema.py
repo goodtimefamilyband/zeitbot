@@ -1,12 +1,3 @@
-#adminlog schema
-
-#from config import SQLALCHEMY_DATABASE_URI, SQL_DEBUG
-SQLALCHEMY_DATABASE_URI = 'sqlite:///adminbot.db'
-SQL_DEBUG = False
-
-import sys
-
-#import sqlalchemy
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, aliased
 from sqlalchemy.ext.declarative import declarative_base, declared_attr
@@ -15,6 +6,9 @@ from sqlalchemy import Column, ForeignKey, Integer, String, Date, Float, Boolean
 import sys
 import discord
 from discord.ext import commands
+
+SQLALCHEMY_DATABASE_URI = 'sqlite:///adminbot.db'
+SQL_DEBUG = False
 
 Base = declarative_base()
 engine = create_engine(SQLALCHEMY_DATABASE_URI, echo=SQL_DEBUG)
@@ -54,6 +48,7 @@ def get_db_member(db, member):
         
     return dbmember
 
+
 def get_db_roles(db, *roles):
     dbroles = []
     for role in roles:
@@ -66,7 +61,6 @@ def get_db_roles(db, *roles):
         dbroles.append(dbrole)
 
     return dbroles
-
 
 
 class EntryMixIn:
@@ -135,7 +129,7 @@ class ServerIdMixin:
 
 
 class CommandListener:
-    def register_listeners(self, bot, db, addgrp=None, testgrp=None, infogrp=None):
+    def register_listeners(self, bot, db, addgrp=None, testgrp=None, infogrp=None, checkfun=None):
         pass
         
     def __str__(self):
@@ -209,6 +203,7 @@ class Role(Base):
     id = Column(String, primary_key=True)
     serverid = Column(String)
     name = Column(String)
+    is_admin = Column(Boolean, default=False)
     
     def find_discord_role(self, server):
         return discord.utils.find(lambda r : r.id == self.id, server.roles)
@@ -422,7 +417,7 @@ class RoleBlacklist(Base, Condition):
         blentry = db.query(BlacklistEntry).filter_by(roleid=self.roleid).filter_by(memberid=msg.author.id).first()
         return blentry is None
 
-    def register_listeners(self, bot, db, addgrp=None, testgrp=None, infogrp=None):
+    def register_listeners(self, bot, db, addgrp=None, testgrp=None, infogrp=None, **kwargs):
         if addgrp is not None and addgrp.get_command("rblc") is None:
             @commands.check(has_role_mentions)
             @addgrp.command(pass_context=True, no_pm=True)
@@ -453,7 +448,7 @@ class RoleBlacklister(Base, Action):
         db.add(blentry)
         db.commit()
 
-    def register_listeners(self, bot, db, addgrp=None, testgrp=None, infogrp=None):
+    def register_listeners(self, bot, db, addgrp=None, testgrp=None, infogrp=None, checkfun=None, **kwargs):
         if addgrp is not None and addgrp.get_command('rbla') is None:
             @addgrp.command(pass_context=True, no_pm=True)
             @commands.check(has_role_mentions)
@@ -481,6 +476,18 @@ class RoleBlacklister(Base, Action):
 
                 msg = "\n".join(["{}: {}".format(m.name, "N" if bl is None else "Y") for (m, bl) in bls])
                 await ctx.bot.send_message(ctx.message.channel, "``` {} ```".format(msg))
+
+        @commands.check(checkfun)
+        @bot.command(pass_context=True, no_pm=True)
+        async def unbl(ctx, *args):
+            """Remove a user from a role condition blacklist
+            """
+
+            for member in ctx.message.mentions:
+                for role in ctx.message.role_mentions:
+                    db.query(BlacklistEntry).filter_by(memberid=member.id).filter_by(roleid=role.id).delete()
+
+            db.commit()
 
 
 class MemberMessageCount(Base):
@@ -510,7 +517,7 @@ class MemberMessageCounter(Base, Action):
         msgcount.msgcount += 1
         db.commit()
 
-    def register_listeners(self, bot, db, addgrp=None, testgrp=None, infogrp=None):
+    def register_listeners(self, bot, db, addgrp=None, testgrp=None, infogrp=None, **kwargs):
 
         if addgrp is not None and addgrp.get_command('mmc') is None:
 
@@ -563,7 +570,7 @@ class MemberMessageQuota(Base, Condition):
 
         return count is not None
 
-    def register_listeners(self, bot, db, addgrp=None, testgrp=None, infogrp=None):
+    def register_listeners(self, bot, db, addgrp=None, testgrp=None, infogrp=None, **kwargs):
         if addgrp is not None and addgrp.get_command('mmq') is None:
             @addgrp.command(pass_context=True, no_pm=True)
             async def mmq(ctx, countid, count):

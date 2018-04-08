@@ -1,27 +1,22 @@
-import sys
-import discord
-from collections import defaultdict
-
-from . import schema
-from .schema import listeners, ConditionEntry, ActionEntry, Rule, Condition, Action
+from .schema import listeners, ConditionEntry, ActionEntry, Rule, Condition, Action, Role
 from sqlalchemy import or_
-
-'''
-class Condition:
-    def eval(self, *args):
-        pass
-        
-class Action:
-    async def __call__(self, *args, **kwargs):
-        pass
-'''
+from discord.ext import commands
 
 
 class RuleRepo:
     def __init__(self, db, client):
         self.db = db
         self.bot = client
-            
+
+    def admin_check(self, ctx):
+        perms = ctx.message.author.permissions_in(ctx.message.channel)
+        if not perms.administrator:
+            dbroles = self.db.query(Role).filter_by(is_admin=True).filter(Role.id.in_([r.id for r in ctx.message.author.roles])).all()
+            if len(dbroles) == 0:
+                return False
+
+        return True
+
     async def run_event(self, eventtype, serverid, *args, **kwargs):
         rules = self.db.query(Rule, ConditionEntry).\
             join(ConditionEntry, Rule.condid == ConditionEntry.id).\
@@ -37,13 +32,12 @@ class RuleRepo:
             if condresult:
                 actentries = self.db.query(ActionEntry).filter_by(ruleid=rule.id)
                 for actentry in actentries:
-                    # actclass = getattr(schema, actentry.actclass)
                     action = actentry.load_instance(self.db)
-                    # self.db.query(actclass).filter_by(actionid=actentry.id).first()
                     self.bot.loop.create_task(action.perform(self.db, self.bot, *args, **kwargs))
                     
     def register_commands(self):
-        
+
+        @commands.check(self.admin_check)
         @self.bot.group(pass_context=True)
         async def addc(ctx):
             pass
@@ -52,6 +46,7 @@ class RuleRepo:
         async def test(ctx):
             print("test[ctx={}]".format(ctx))
 
+        @commands.check(self.admin_check)
         @self.bot.group(pass_context=True)
         async def adda(ctx):
             pass
@@ -68,7 +63,7 @@ class RuleRepo:
             elif issubclass(listener, Action):
                 addgrp = adda
 
-            listener().register_listeners(self.bot, self.db, addgrp=addgrp, testgrp=test, infogrp=info)
+            listener().register_listeners(self.bot, self.db, addgrp=addgrp, testgrp=test, infogrp=info, checkfun=self.admin_check)
         
         @self.bot.event
         async def on_ready():
@@ -78,8 +73,7 @@ class RuleRepo:
             lst = "\n".join(["{} {}".format(entry.id, str(entry.load_instance(self.db))) for entry in entries])
             msg = "```{}```".format(lst)
             await ctx.bot.send_message(ctx.message.channel, msg)
-        
-        # TODO: Figure out condition server IDs
+
         @self.bot.command(pass_context=True, no_pm=True)
         async def conditions(ctx):
             entries = self.db.query(ConditionEntry)
@@ -87,9 +81,10 @@ class RuleRepo:
 
         @self.bot.command(pass_context=True, no_pm=True)
         async def actions(ctx):
-            entries = self.db.query(ActionEntry)
+            entries = self.db.query(ActionEntry).filter_by(ruleid=None)
             await send_entry_list(ctx, entries)
-            
+
+        @commands.check(self.admin_check)
         @self.bot.command(pass_context=True, no_pm=True)
         async def delc(ctx, condid):
             entry = self.db.query(ConditionEntry).filter_by(id=int(condid))
@@ -103,6 +98,7 @@ class RuleRepo:
                 
             await ctx.bot.send_message(ctx.message.channel, msg)
 
+        @commands.check(self.admin_check)
         @self.bot.command(pass_context=True, no_pm=True)
         async def rule(ctx, condid):
             centry = self.db.query(ConditionEntry).filter_by(id=int(condid))
@@ -116,6 +112,7 @@ class RuleRepo:
 
             await ctx.bot.send_message(ctx.message.channel, "Rule added ({})".format(r.id))
 
+        @commands.check(self.admin_check)
         @self.bot.command(pass_context=True, no_pm=True)
         async def onrule(ctx, ruleid, actionid):
             rule = self.db.query(Rule).filter_by(id=int(ruleid)).first()
@@ -162,69 +159,3 @@ class RuleRepo:
                 return
 
             await self.run_event("on_message", msg.server.id, msg)
-            
-
-'''            
-class MessageCountCondition(Condition):
-
-    def __init__(self, count, bot, server):
-        self.bot = bot
-        self.server = server
-        self.usercounts = defaultdict(int)
-        self.count = count
-        
-        self.bot.loop.create_task(self.loop())
-        
-    def server_check(self, msg):
-        return self.server.id == msg.server.id
-
-    async def loop(self):
-        while not self.bot.is_closed:
-            msg = await self.bot.wait_for_message(check=self.server_check)
-            self.bot.loop.create_task(self.update(message))
-        
-    async def update(self, message):
-        self.increase_user_count(message.author, 1)
-        
-    # TODO: modify for use with DB
-    def get_user_count(self, user):
-        return self.usercounts[user.id]
-        
-    def increase_user_count(self, user, amt):
-        self.usercounts[user.id] += amt
-        
-    def eval(self, user):
-        print("Evaluating {} >= {} : {}".format(count, self.count, count >= self.count))
-        return self.get_user_count(user) >= self.count
-'''     
-   
-'''   
-class ComplementCondition(Condition):
-    def __init__(self, condition):
-        self.condition = condition
-        
-    def eval(self, *args, **kwargs):
-        return !condition.eval(*args, **kwargs)
-        
-class HasRoleCondition(Condition):
-    def __init__(self, role):
-        self.role = role
-        
-    def eval(self, member):
-        mrole = discord.utils.find(lambda m : m.id == self.role.id, member.roles)
-        return mrole is not None
-        
-        
-class AddRoleAction(Action):
-    def __init__(self, bot, *roles, dbcheck = lambda u,r : (r)):
-        self.bot = bot
-        self.roles = roles
-        #self.dbcheck = dbcheck
-
-    async def __call__(self, user):
-        
-        roles = [role for role in self.roles if not role in user.roles]
-        print("AddRoleAction {} {} {}".format([role.name for role in roles], self.roles, user.roles))
-        if len(roles) > 0:
-            await self.bot.add_roles(user, *roles)
-'''
