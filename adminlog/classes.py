@@ -17,6 +17,27 @@ class RuleRepo:
 
         return True
 
+    async def run_message_event(self, msg):
+        rules = self.db.query(Rule, ConditionEntry). \
+            join(ConditionEntry, Rule.condid == ConditionEntry.id). \
+            filter(Rule.serverid == msg.server.id). \
+            filter(or_(ConditionEntry.event == "on_message", ConditionEntry.event == None))
+
+        for (rule, condentry) in rules:
+            print(rule, condentry)
+            cond = condentry.load_instance(self.db)
+            condresult = await cond.evaluate(self.db, self.bot, msg)
+
+            if condresult:
+                actentries = self.db.query(ActionEntry).filter_by(ruleid=rule.id)
+                for actentry in actentries:
+                    action = actentry.load_instance(self.db)
+
+                    if actentry.event == "on_message":
+                        self.bot.loop.create_task(action.perform(self.db, self.bot, msg))
+                    elif actentry.event == "on_user":
+                        self.bot.loop.create_task(action.perform(self.db, self.bot, msg.author))
+
     async def run_event(self, eventtype, serverid, *args, **kwargs):
         rules = self.db.query(Rule, ConditionEntry).\
             join(ConditionEntry, Rule.condid == ConditionEntry.id).\
@@ -168,4 +189,4 @@ class RuleRepo:
             if msg.server is None:
                 return
 
-            await self.run_event("on_message", msg.server.id, msg)
+            await self.run_message_event(msg)
