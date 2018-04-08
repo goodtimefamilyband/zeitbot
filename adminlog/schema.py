@@ -380,9 +380,7 @@ class RoleAdderRole(Base):
 class RoleAdder(Base, Action):
     __tablename__ = "roleadders"
     
-    actid = Column(Integer, ForeignKey('actions.id'), primary_key=True)
-    
-    async def perform(self, db, bot, msg):
+    async def perform(self, db, bot, member):
         rar_alias = aliased(RoleAdderRole)
     
         roles = db.query(Role).\
@@ -393,9 +391,36 @@ class RoleAdder(Base, Action):
         for role in roles:
             servers[role.serverid] = discord.utils.find(lambda s : s.id == role.serverid, bot.servers)
             
-        rolestoadd = [r.find_discord_role(servers[r.serverid]) in roles]
+        rolestoadd = [r.find_discord_role(servers[r.serverid]) for r in roles]
         if len(rolestoadd) > 0:
-            await bot.add_roles(msg.author, *rolestoadd)
+            await bot.add_roles(member, *rolestoadd)
+
+    def register_listeners(self, bot, db, addgrp=None, testgrp=None, infogrp=None, checkfun=None):
+        if addgrp is not None and addgrp.get_command("roleadd") is None:
+
+            @commands.check(has_role_mentions)
+            @addgrp.command(pass_context=True, no_pm=True)
+            async def roleadd(ctx, *args):
+                dbroles = get_db_roles(db, ctx.message.role_mentions)
+                entry = self.add_entry(db, event="on_user")
+                act = RoleAdder(actid=entry.id)
+                db.add(act)
+
+                for dbrole in dbroles:
+                    db.add(RoleAdderRole(actid=entry.id, roleid=dbrole.id))
+
+                db.commit()
+                await ctx.bot.send_message("Action added ({})".format(entry.id))
+
+        if infogrp is not None and infogrp.get_command("roleadd" is None):
+            @infogrp.command(pass_context=True, no_pm=True)
+            async def roleadd(ctx, actid):
+                rars = db.query(RoleAdderRole, Role).\
+                    join(Role, RoleAdderRole.roleid == Role.id).\
+                    filter(RoleAdderRole.actid == int(actid))
+
+                msg = "\n".join([r.name for rar, r in rars])
+                await ctx.bot.send_message(ctx.message.channel, "``` {} ```".format(msg))
 
 
 class BlacklistEntry(Base):

@@ -144,7 +144,7 @@ class RuleRepo:
             cond = str(condentry.load_instance(self.db))
 
             actentries = self.db.query(ActionEntry).filter_by(ruleid=rule.id)
-            actions = [str(actentry.load_instance(self.db)) for actentry in actentries]
+            actions = ["{} {}".format(actentry.id, str(actentry.load_instance(self.db))) for actentry in actentries]
 
             msg = "RULE {}\n".format(rule.id)
             msg += "Condition: {}\n".format(cond)
@@ -152,6 +152,16 @@ class RuleRepo:
             msg += "\n".join(actions)
 
             await ctx.bot.send_message(ctx.message.channel, "```{}```".format(msg))
+
+        @commands.check(self.admin_check)
+        @self.bot.command(pass_context=True, no_pm=True)
+        async def ruledel(ctx, ruleid):
+            rule = self.db.query(Rule).filter_by(id=int(ruleid))
+            if rule is not None:
+                rule.delete()
+                self.db.commit()
+
+                await ctx.bot.send_message(ctx.message.channel, "Rule {} deleted".format(ruleid))
 
         @self.bot.listen()
         async def on_message(msg):
