@@ -23,6 +23,13 @@ def listener(cls):
     return cls
 
 
+class Config(Base):
+    __tablename__ = "config"
+
+    id = Column(Integer, primary_key=True)
+    init_time = Column(Integer)
+
+
 class EntryFactory:
 
     def __init__(self, entrycls):
@@ -474,13 +481,29 @@ class RoleBlacklister(Base, Action):
 
         @commands.check(checkfun)
         @bot.command(pass_context=True, no_pm=True)
+        async def bl(ctx, *args):
+            """Add a user to a role condition blacklist
+            """
+
+            for member in ctx.message.mentions:
+                dbmember = get_db_member(db, member)
+                for role in get_db_roles(db, *ctx.message.role_mentions):
+                    blentry = db.query(BlacklistEntry).filter_by(memberid=dbmember.id).filter_by(roleid=role.id).first()
+                    if blentry is None:
+                        db.add(BlacklistEntry(roleid=role.id, memberid=dbmember.id))
+
+            db.commit()
+
+        @commands.check(checkfun)
+        @bot.command(pass_context=True, no_pm=True)
         async def unbl(ctx, *args):
             """Remove a user from a role condition blacklist
             """
 
             for member in ctx.message.mentions:
-                for role in ctx.message.role_mentions:
-                    db.query(BlacklistEntry).filter_by(memberid=member.id).filter_by(roleid=role.id).delete()
+                dbmember = get_db_member(db, member)
+                for role in get_db_roles(db, *ctx.message.role_mentions):
+                    db.query(BlacklistEntry).filter_by(memberid=dbmember.id).filter_by(roleid=role.id).delete()
 
             db.commit()
 

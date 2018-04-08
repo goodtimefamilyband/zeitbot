@@ -8,6 +8,7 @@ import time
 import websockets
 import aiohttp
 
+
 class Logger:
 
     def before_update(self):
@@ -42,7 +43,8 @@ class Logger:
     #TODO: turn this into a decorator?
     def register_commands(self):
         pass
-        
+
+
 class Logbot(commands.Bot):
 
     def __init__(self, *args, wait_interval=300, **kwargs):
@@ -131,8 +133,7 @@ class Logbot(commands.Bot):
             print(ex)
         except discord.errors.HTTPException as ex:
             print(ex)
-        
-        
+
     async def bg_loop(self):
         await self.wait_until_ready()
         while not self.is_closed:
@@ -181,20 +182,19 @@ class Regbot(Logbot):
             except discord.errors.Forbidden:
                 await super().send_message(message.author, "I'm not allowed to send messages to #" + destination.name)
 
+
 class DiscreteLogbot(Logbot):
     
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, init_time=time.time(), **kwargs):
         super().__init__(*args, **kwargs)
         
-        self.after = time.time()
+        self.after = init_time
         self.before = None
         
     def get_logs(self, channel):
         return self.logs_from(channel, before=datetime.fromtimestamp(self.before), after=datetime.fromtimestamp(self.after))
-        
-    
+
     async def process_loop(self):
         self.before = time.time()
         await super().process_loop()
         self.after = self.before
-    
