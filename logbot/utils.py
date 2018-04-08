@@ -1,6 +1,12 @@
 #utils.py
 
 from collections import defaultdict
+from datetime import timezone
+
+
+def naive_utc_to_unix(naive_utc_dt):
+    return naive_utc_dt.replace(tzinfo=timezone.utc).timestamp()
+
 
 class ChannelContainer:
 

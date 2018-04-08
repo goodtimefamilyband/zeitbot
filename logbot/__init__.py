@@ -4,9 +4,11 @@ import discord
 from discord.ext import commands
 import asyncio
 from datetime import datetime, tzinfo
+import pytz
 import time
 import websockets
 import aiohttp
+from .utils import naive_utc_to_unix
 
 
 class Logger:
@@ -196,13 +198,16 @@ class DiscreteLogbot(Logbot):
 
         @self.listen()
         async def on_message(message):
-            self.next_after = time.mktime(message.timestamp.timetuple())
+            # self.next_after = time.mktime(message.timestamp.timetuple())
+            self.next_after = naive_utc_to_unix(message.timestamp)
         
     def get_logs(self, channel):
-        return self.logs_from(channel, before=datetime.fromtimestamp(self.before), after=datetime.fromtimestamp(self.after))
+        return self.logs_from(channel, before=datetime.utcfromtimestamp(self.before), after=datetime.utcfromtimestamp(self.after))
 
     async def process_loop(self):
         self.before = time.time()
         self.next_after = self.before
+        print(datetime.utcfromtimestamp(self.after), datetime.utcfromtimestamp(self.before))
+
         await super().process_loop()
         self.after = self.next_after
