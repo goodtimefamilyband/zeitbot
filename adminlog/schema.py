@@ -1,7 +1,8 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker, aliased
 from sqlalchemy.ext.declarative import declarative_base, declared_attr
 from sqlalchemy import Column, ForeignKey, Integer, String, Date, Float, Boolean
+from sqlalchemy.engine import Engine
 
 import sys
 import discord
@@ -16,6 +17,13 @@ engine = create_engine(SQLALCHEMY_DATABASE_URI, echo=SQL_DEBUG)
 Session = sessionmaker(bind=engine)
 
 listeners = []
+
+
+@event.listens_for(Engine, "connect")
+def set_sqlite_pragma(dbapi_connection, connection_record):
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA foreign_keys = ON")
+    cursor.close()
 
 
 def listener(cls):

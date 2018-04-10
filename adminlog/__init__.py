@@ -19,8 +19,6 @@ class AdminLogger(Logger):
 
     def process_message(self, msg):
         self.client.loop.create_task(self.repo.run_event("on_message", msg.server.id, msg))
-        # self.update_after(time.mktime(msg.timestamp.timetuple()))
-        # self.update_after(msg.timestamp.total_seconds())
         self.update_after(naive_utc_to_unix(msg.timestamp))
         
     def after_update(self):
