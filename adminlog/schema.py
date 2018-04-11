@@ -54,14 +54,25 @@ class EntryFactory:
         return NewFactory
 
 
+def get_db_user(db, user):
+    db_user = db.query(User).filter_by(id=user.id).first()
+    if db_user is None:
+        db_user = User(id=user.id, name=user.name)
+        db.add(db_user)
+        db.commit()
+
+    return db_user
+
+
 def get_db_member(db, member):
-    dbmember = db.query(Member).filter_by(id=member.id).filter_by(serverid=member.server.id).first()
-    if dbmember is None:
-        dbmember = Member(id=member.id, serverid=member.server.id, name=member.name)
-        db.add(dbmember)
+    db_user = get_db_user(db, member)
+    db_member = db.query(Member).filter_by(memberid=db_user.id).filter_by(serverid=member.server.id).first()
+    if db_member is None:
+        db_member = Member(memberid=db_user.id, serverid=member.server.id)
+        db.add(db_member)
         db.commit()
         
-    return dbmember
+    return db_member
 
 
 def get_db_roles(db, *roles):
@@ -76,6 +87,33 @@ def get_db_roles(db, *roles):
         dbroles.append(dbrole)
 
     return dbroles
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(String, primary_key=True)
+    name = Column(String)
+
+
+class Member(Base):
+    __tablename__ = "members"
+
+    id = Column(Integer, primary_key=True)
+    userid = Column(String, ForeignKey('users.id', onupdate="CASCADE", ondelete="CASCADE"))
+    serverid = Column(String, ForeignKey('servers.id', onupdate='CASCADE', ondelete='CASCADE'))
+
+
+class Role(Base):
+    __tablename__ = "roles"
+
+    id = Column(String, primary_key=True)
+    serverid = Column(String)
+    name = Column(String)
+    is_admin = Column(Boolean, default=False)
+
+    def find_discord_role(self, server):
+        return discord.utils.find(lambda r: r.id == self.id, server.roles)
 
 
 class EntryMixIn:
@@ -179,12 +217,22 @@ class Action(CommandListener, ActIdMixin):
         pass
 
 
-# TODO: use object_session() (or similar)?
-class Server(Base):
+@listener
+class Server(Base, CommandListener):
     __tablename__ = "servers"
     
     id = Column(String, primary_key=True)
     after = Column(Float)
+
+    def register_listeners(self, bot, db, **kwargs):
+        @bot.listen()
+        async def on_ready():
+            for server in bot.servers:
+                existing = db.query(Server).filter_by(id=server.id).first()
+                if existing is None:
+                    db.add(Server(id=server.id))
+
+            db.commit()
 
 
 # TODO: Inherit from this? How to instantiate?
@@ -199,26 +247,6 @@ class Rule(Base, CondIdMixin):
         return "{} (Condition: {})".format(self.id, self.condid)
 
 
-class Member(Base):
-    __tablename__ = "members"
-    
-    id = Column(String, primary_key=True)
-    serverid = Column(String, ForeignKey('servers.id'), primary_key=True)
-    name = Column(String)
-
-
-class Role(Base):
-    __tablename__ = "roles"
-    
-    id = Column(String, primary_key=True)
-    serverid = Column(String)
-    name = Column(String)
-    is_admin = Column(Boolean, default=False)
-    
-    def find_discord_role(self, server):
-        return discord.utils.find(lambda r : r.id == self.id, server.roles)
-
-    
 @listener
 class TrueCondition(Base, Condition):
     __tablename__ = "trueconditions"
@@ -435,7 +463,7 @@ class BlacklistEntry(Base):
     __tablename__ = 'roleblacklist'
 
     roleid = Column(String, ForeignKey('roles.id'), primary_key=True)
-    memberid = Column(String, ForeignKey('members.id'), primary_key=True)
+    memberid = Column(Integer, ForeignKey('members.id'), primary_key=True)
 
 
 def has_role_mentions(ctx):
@@ -545,7 +573,7 @@ class MemberMessageCount(Base):
     __tablename__ = "membermessagecounts"
 
     countid = Column(Integer, ForeignKey('membermessagecounters.actid'), primary_key=True)
-    memberid = Column(String, ForeignKey("members.id"), primary_key=True)
+    memberid = Column(Integer, ForeignKey("members.id"), primary_key=True)
     msgcount = Column(Integer, default=0)
 
 
