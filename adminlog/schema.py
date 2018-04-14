@@ -66,9 +66,9 @@ def get_db_user(db, user):
 
 def get_db_member(db, member):
     db_user = get_db_user(db, member)
-    db_member = db.query(Member).filter_by(memberid=db_user.id).filter_by(serverid=member.server.id).first()
+    db_member = db.query(Member).filter_by(userid=db_user.id).filter_by(serverid=member.server.id).first()
     if db_member is None:
-        db_member = Member(memberid=db_user.id, serverid=member.server.id)
+        db_member = Member(userid=db_user.id, serverid=member.server.id)
         db.add(db_member)
         db.commit()
         
@@ -477,7 +477,10 @@ class RoleBlacklist(Base, Condition):
     roleid = Column(String, ForeignKey('roles.id'))
 
     async def evaluate(self, db, bot, msg):
-        blentry = db.query(BlacklistEntry).filter_by(roleid=self.roleid).filter_by(memberid=msg.author.id).first()
+        blentry = db.query(BlacklistEntry).\
+            join(Member, Member.id == BlacklistEntry.memberid).\
+            filter(BlacklistEntry.roleid == self.roleid).\
+            filter(Member.userid == msg.author.id).first()
         return blentry is None
 
     def register_listeners(self, bot, db, addgrp=None, testgrp=None, infogrp=None, **kwargs):
@@ -506,8 +509,8 @@ class RoleBlacklister(Base, Action):
     roleid = Column(String, ForeignKey('roles.id'))
     
     async def perform(self, db, bot, msg):
-        dbmember = get_db_member(db, msg.author)
-        blentry = BlacklistEntry(roleid=self.roleid,memberid=dbmember.id)
+        db_member = get_db_member(db, msg.author)
+        blentry = BlacklistEntry(roleid=self.roleid, memberid=db_member.id)
         db.add(blentry)
         db.commit()
 
@@ -533,9 +536,10 @@ class RoleBlacklister(Base, Action):
                 if len(members) == 0:
                     members = [ctx.message.author]
 
+                db_members = [get_db_member(db, member) for member in members]
                 bls = []
-                for member in members:
-                    bls.append((member, db.query(BlacklistEntry).filter_by(memberid=member.id).filter_by(roleid=act.roleid).first()))
+                for db_member in db_members:
+                    bls.append((db_member, db.query(BlacklistEntry).filter_by(memberid=db_member.id).filter_by(roleid=act.roleid).first()))
 
                 msg = "\n".join(["{}: {}".format(m.name, "N" if bl is None else "Y") for (m, bl) in bls])
                 await ctx.bot.send_message(ctx.message.channel, "``` {} ```".format(msg))
@@ -582,18 +586,18 @@ class MemberMessageCounter(Base, Action):
     __tablename__ = "membermessagecounters"
 
     async def perform(self, db, bot, msg):
-        dbmember = get_db_member(db, msg.author)
+        db_member = get_db_member(db, msg.author)
         
-        msgcount = db.query(MemberMessageCount).\
-        filter_by(countid=self.actid).\
-        filter_by(memberid=dbmember.id).\
-        first()
+        msg_count = db.query(MemberMessageCount).\
+            filter_by(countid=self.actid).\
+            filter_by(memberid=db_member.id).\
+            first()
         
-        if msgcount is None:
-            msgcount = MemberMessageCount(countid=self.actid, memberid=dbmember.id, msgcount=0)
-            db.add(msgcount)
+        if msg_count is None:
+            msg_count = MemberMessageCount(countid=self.actid, memberid=db_member.id, msgcount=0)
+            db.add(msg_count)
             
-        msgcount.msgcount += 1
+        msg_count.msgcount += 1
         db.commit()
 
     def register_listeners(self, bot, db, addgrp=None, testgrp=None, infogrp=None, **kwargs):
@@ -621,13 +625,17 @@ class MemberMessageCounter(Base, Action):
                 for member in memberlist:
                     memberdict[member.id] = member
 
+
                 # TODO: Use WHERE memberid IN(...)
                 inst = db.query(MemberMessageCounter).filter_by(actid=int(countid)).first()
-                membercounts = [db.query(MemberMessageCount).
-                                filter_by(countid=inst.actid).
-                                filter_by(memberid=member.id).first() for member in memberlist]
+                membercounts = [db.query(MemberMessageCount, Member, User).
+                                join(Member, Member.id == MemberMessageCount.memberid).
+                                join(User, User.id == Member.userid).
+                                filter(MemberMessageCount.countid == inst.actid).
+                                filter(Member.userid == member.id).
+                                first() for member in memberlist]
 
-                msg = "\n".join(['{} {}'.format(memberdict[count.memberid].name, count.msgcount) for count in membercounts if count is not None])
+                msg = "\n".join(['{} {}'.format(db_user.name, count.msgcount) for (count, db_member, db_user) in membercounts if count is not None])
                 await ctx.bot.send_message(ctx.message.channel, "```{}```".format(msg))
 
 
