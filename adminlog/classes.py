@@ -121,6 +121,20 @@ class RuleRepo:
 
         @commands.check(self.admin_check)
         @self.bot.command(pass_context=True, no_pm=True)
+        async def dela(ctx, actid):
+            entry = self.db.query(ActionEntry).filter_by(id=int(actid))
+            msg = ""
+            if entry is None:
+                msg = "No actions with that ID"
+            else:
+                entry.delete()
+                self.db.commit()
+                msg = "Action {} deleted".format(actid)
+
+            await ctx.bot.send_message(ctx.message.channel, msg)
+
+        @commands.check(self.admin_check)
+        @self.bot.command(pass_context=True, no_pm=True)
         async def rule(ctx, condid):
             centry = self.db.query(ConditionEntry).filter_by(id=int(condid))
             if centry is None:
