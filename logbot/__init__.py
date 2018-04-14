@@ -190,9 +190,9 @@ class DiscreteLogbot(Logbot):
     def __init__(self, *args, init_time=time.time(), **kwargs):
         super().__init__(*args, **kwargs)
         
-        self.after = init_time
+        self.after = None
         self.before = None
-        self.next_after = None
+        self.next_after = init_time
 
         self.has_run = False
 
@@ -206,8 +206,9 @@ class DiscreteLogbot(Logbot):
 
     async def process_loop(self):
         self.before = time.time()
+        self.after = self.next_after
         self.next_after = self.before
         print(datetime.utcfromtimestamp(self.after), datetime.utcfromtimestamp(self.before))
 
         await super().process_loop()
-        self.after = self.next_after
+        # self.after = self.next_after

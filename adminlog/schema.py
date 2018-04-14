@@ -412,7 +412,7 @@ class RoleAdderRole(Base):
     roleid = Column(String, ForeignKey('roles.id'), primary_key=True)
     actid = Column(Integer, ForeignKey('actions.id'), primary_key=True)
     
-
+@listener
 class RoleAdder(Base, Action):
     __tablename__ = "roleadders"
     
@@ -420,7 +420,7 @@ class RoleAdder(Base, Action):
         rar_alias = aliased(RoleAdderRole)
     
         roles = db.query(Role).\
-        join(rar_alias, Role.roleid == rar_alias.roleid).\
+        join(rar_alias, Role.id == rar_alias.roleid).\
         filter(rar_alias.actid == self.actid)
         
         servers = {}
@@ -437,7 +437,7 @@ class RoleAdder(Base, Action):
             @commands.check(has_role_mentions)
             @addgrp.command(pass_context=True, no_pm=True)
             async def roleadd(ctx, *args):
-                dbroles = get_db_roles(db, ctx.message.role_mentions)
+                dbroles = get_db_roles(db, *ctx.message.role_mentions)
                 entry = self.add_entry(db, event="on_user")
                 act = RoleAdder(actid=entry.id)
                 db.add(act)
@@ -446,9 +446,9 @@ class RoleAdder(Base, Action):
                     db.add(RoleAdderRole(actid=entry.id, roleid=dbrole.id))
 
                 db.commit()
-                await ctx.bot.send_message("Action added ({})".format(entry.id))
+                await ctx.bot.send_message(ctx.message.channel, "Action added ({})".format(entry.id))
 
-        if infogrp is not None and infogrp.get_command("roleadd" is None):
+        if infogrp is not None and infogrp.get_command("roleadd") is None:
             @infogrp.command(pass_context=True, no_pm=True)
             async def roleadd(ctx, actid):
                 rars = db.query(RoleAdderRole, Role).\
