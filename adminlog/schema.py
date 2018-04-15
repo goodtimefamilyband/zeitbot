@@ -536,18 +536,18 @@ class RoleBlacklister(Base, Action):
                 if len(members) == 0:
                     members = [ctx.message.author]
 
-                db_members = [get_db_member(db, member) for member in members]
+                db_members = [(member, get_db_member(db, member)) for member in members]
                 bls = []
-                for db_member in db_members:
-                    bls.append((db_member, db.query(BlacklistEntry).filter_by(memberid=db_member.id).filter_by(roleid=act.roleid).first()))
+                for (member, db_member) in db_members:
+                    bls.append((member, db_member, db.query(BlacklistEntry).filter_by(memberid=db_member.id).filter_by(roleid=act.roleid).first()))
 
-                msg = "\n".join(["{}: {}".format(m.name, "N" if bl is None else "Y") for (m, bl) in bls])
+                msg = "\n".join(["{}: {}".format(m.name, "N" if bl is None else "Y") for (m, dbm, bl) in bls])
                 await ctx.bot.send_message(ctx.message.channel, "``` {} ```".format(msg))
 
         @commands.check(checkfun)
         @bot.command(pass_context=True, no_pm=True)
         async def bl(ctx, *args):
-            """Add a user to a role condition blacklist
+            """Add a mentioned user to a role condition blacklist with mentioned role
             """
 
             for member in ctx.message.mentions:
