@@ -45,8 +45,8 @@ class EntryFactory:
 
     def __call__(self, cls, *args, **kwargs):
         class NewFactory(cls):
-            def add_entry(this, db, event=None):
-                entry = self.cls(entryclass=type(this).__name__, entrymod=this.__module__, event=event)
+            def add_entry(this, db, author, event=None):
+                entry = self.cls(entryclass=type(this).__name__, entrymod=this.__module__, author=author, event=event)
                 db.add(entry)
                 db.commit()
                 return entry
@@ -134,15 +134,27 @@ class EntryMixIn:
     def event(self):
         return Column(String)
 
+    @declared_attr
+    def author(self):
+        return Column(Integer, ForeignKey('members.id', onupdate="CASCADE", ondelete="SET NULL"))
+
+    @declared_attr
+    def shared(self):
+        return Column(Boolean, default=False)
+
     def load_instance(self, db):
 
         entrycls = getattr(sys.modules[self.entrymod], self.entryclass)
 
         # TODO: Make this not stupid
+        argkey = None
         if issubclass(entrycls, Condition):
             argkey = "condid"
         elif issubclass(entrycls, Action):
             argkey = "actid"
+
+        if argkey is None:
+            return None
 
         kwargs = {}
         kwargs[argkey] = self.id
@@ -192,9 +204,6 @@ class CommandListener:
 @EntryFactory(entrycls=ConditionEntry)
 class Condition(CommandListener, CondIdMixin):
     
-    addcommand = "addcondition"
-    testcommand = "test"
-    
     async def evaluate(self, db, bot, *args, **kwargs):
         return False
 
@@ -242,9 +251,10 @@ class Rule(Base, CondIdMixin):
     id = Column(Integer, primary_key=True)
     serverid = Column(String, ForeignKey('servers.id'))
     condid = Column(Integer, ForeignKey('conditions.id', onupdate="CASCADE", ondelete="CASCADE"))
+    enabled = Column(Boolean, default=False)
 
     def __str__(self):
-        return "{} (Condition: {})".format(self.id, self.condid)
+        return "{} ({}, Condition: {})".format(self.id, "Enabled" if self.enabled else "Disabled", self.condid)
 
 
 @listener
@@ -259,7 +269,8 @@ class TrueCondition(Base, Condition):
             
             @addgrp.command(pass_context=True, no_pm=True)
             async def alwaystrue(ctx):
-                condentry = self.add_entry(db)
+                author = get_db_member(db, ctx.message.author)
+                condentry = self.add_entry(db, author.id)
                 print(condentry.id, condentry.entryclass, type(TrueCondition))
                 
                 condition = TrueCondition(condid=condentry.id)
@@ -306,8 +317,9 @@ class ComplementCondition(Base, Condition):
                     return
                     
                 tgtcond = tgtentry.load_instance(db)
-                
-                condentry = self.add_entry(db, event=tgtentry.event)
+
+                author = get_db_member(db, ctx.message.author)
+                condentry = self.add_entry(db, author.id, event=tgtentry.event)
                 cond = ComplementCondition(condid=condentry.id, target=target)
                 db.add(cond)
                 db.commit()
@@ -362,8 +374,9 @@ class AndCondition(Base, Condition):
                 if leftcond.event != rightcond.event:
                     await ctx.bot.send_message("Condition event types do not match")
                     return
-                
-                entry = self.add_entry(db, event=leftcond.event)
+
+                author = get_db_member(db, ctx.message.author)
+                entry = self.add_entry(db, author.id, event=leftcond.event)
                 cond = AndCondition(condid=entry.id, lhand=int(left), rhand=int(right))
                 db.add(cond)
                 db.commit()
@@ -411,7 +424,8 @@ class RoleAdderRole(Base):
     
     roleid = Column(String, ForeignKey('roles.id'), primary_key=True)
     actid = Column(Integer, ForeignKey('actions.id'), primary_key=True)
-    
+
+
 @listener
 class RoleAdder(Base, Action):
     __tablename__ = "roleadders"
@@ -438,7 +452,8 @@ class RoleAdder(Base, Action):
             @addgrp.command(pass_context=True, no_pm=True)
             async def roleadd(ctx, *args):
                 dbroles = get_db_roles(db, *ctx.message.role_mentions)
-                entry = self.add_entry(db, event="on_user")
+                author = get_db_member(db, ctx.message.author)
+                entry = self.add_entry(db, author.id, event="on_user")
                 act = RoleAdder(actid=entry.id)
                 db.add(act)
 
@@ -489,7 +504,8 @@ class RoleBlacklist(Base, Condition):
             @addgrp.command(pass_context=True, no_pm=True)
             async def rblc(ctx, *roles):
                 dbroles = get_db_roles(db, ctx.message.role_mentions[0])
-                entry = self.add_entry(db, event="on_message")
+                author = get_db_member(db, ctx.message.author)
+                entry = self.add_entry(db, author.id, event="on_message")
                 cond = RoleBlacklist(condid=entry.id, roleid=dbroles[0].id)
                 db.add(cond)
                 db.commit()
@@ -520,7 +536,8 @@ class RoleBlacklister(Base, Action):
             @commands.check(has_role_mentions)
             async def rbla(ctx, *roles):
                 dbroles = get_db_roles(db, ctx.message.role_mentions[0])
-                entry = self.add_entry(db, event="on_message")
+                author = get_db_member(db, ctx.message.author)
+                entry = self.add_entry(db, author.id, event="on_message")
                 act = RoleBlacklister(actid=entry.id, roleid=dbroles[0].id)
                 db.add(act)
                 db.commit()
@@ -606,7 +623,8 @@ class MemberMessageCounter(Base, Action):
 
             @addgrp.command(pass_context=True, no_pm=True)
             async def mmc(ctx):
-                entry = self.add_entry(db, event="on_message")
+                author = get_db_member(db, ctx.message.author)
+                entry = self.add_entry(db, author.id, event="on_message")
                 action = MemberMessageCounter(actid=entry.id)
                 db.add(action)
                 db.commit()
@@ -635,7 +653,12 @@ class MemberMessageCounter(Base, Action):
                                 filter(Member.userid == member.id).
                                 first() for member in memberlist]
 
-                msg = "\n".join(['{} {}'.format(db_user.name, count.msgcount) for (count, db_member, db_user) in membercounts if count is not None])
+                membercounts = [m for m in membercounts if m is not None]
+                if len(membercounts) == 0:
+                    msg = "\n".join(['{} 0'.format(member.name) for member in memberlist])
+                else:
+                    msg = "\n".join(['{} {}'.format(db_user.name, count.msgcount) for (count, db_member, db_user) in membercounts if count is not None])
+
                 await ctx.bot.send_message(ctx.message.channel, "```{}```".format(msg))
 
 
@@ -661,7 +684,8 @@ class MemberMessageQuota(Base, Condition):
         if addgrp is not None and addgrp.get_command('mmq') is None:
             @addgrp.command(pass_context=True, no_pm=True)
             async def mmq(ctx, countid, count):
-                entry = self.add_entry(db, event='on_message')
+                author = get_db_member(db, ctx.message.author)
+                entry = self.add_entry(db, author.id, event='on_message')
                 cond = MemberMessageQuota(condid=entry.id, countid=int(countid), count=int(count))
                 db.add(cond)
                 db.commit()

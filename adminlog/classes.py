@@ -1,4 +1,4 @@
-from .schema import listeners, ConditionEntry, ActionEntry, Rule, Condition, Action, Role
+from .schema import listeners, ConditionEntry, ActionEntry, Rule, Condition, Action, Role, Member, Server
 from sqlalchemy import or_
 from discord.ext import commands
 
@@ -21,6 +21,7 @@ class RuleRepo:
         rules = self.db.query(Rule, ConditionEntry). \
             join(ConditionEntry, Rule.condid == ConditionEntry.id). \
             filter(Rule.serverid == msg.server.id). \
+            filter(Rule.enabled == True). \
             filter(or_(ConditionEntry.event == "on_message", ConditionEntry.event == None))
 
         for (rule, condentry) in rules:
@@ -55,6 +56,12 @@ class RuleRepo:
                 for actentry in actentries:
                     action = actentry.load_instance(self.db)
                     self.bot.loop.create_task(action.perform(self.db, self.bot, *args, **kwargs))
+
+    def query_entries(self, entrycls, serverid):
+        return self.db.query(entrycls). \
+            join(Member, entrycls.author == Member.id). \
+            join(Server, Server.id == Member.serverid). \
+            filter(or_(Server.id == serverid, entrycls.shared == True))
                     
     def register_commands(self):
 
@@ -97,12 +104,12 @@ class RuleRepo:
 
         @self.bot.command(pass_context=True, no_pm=True)
         async def conditions(ctx):
-            entries = self.db.query(ConditionEntry)
+            entries = self.query_entries(ConditionEntry, ctx.message.server.id)
             await send_entry_list(ctx, entries)
 
         @self.bot.command(pass_context=True, no_pm=True)
         async def actions(ctx):
-            entries = self.db.query(ActionEntry).filter_by(ruleid=None)
+            entries = self.query_entries(ActionEntry, ctx.message.server.id).filter(ActionEntry.ruleid == None)
             await send_entry_list(ctx, entries)
 
         @commands.check(self.admin_check)
@@ -187,6 +194,20 @@ class RuleRepo:
             msg += "\n".join(actions)
 
             await ctx.bot.send_message(ctx.message.channel, "```{}```".format(msg))
+
+        @commands.check(self.admin_check)
+        @self.bot.command(pass_context=True, no_pm=True)
+        async def enrule(ctx, ruleid):
+            r = self.db.query(Rule).filter_by(id=int(ruleid)).first()
+            r.enabled = True
+            self.db.commit()
+
+        @commands.check(self.admin_check)
+        @self.bot.command(pass_context=True, no_pm=True)
+        async def disrule(ctx, ruleid):
+            r = self.db.query(Rule).filter_by(id=int(ruleid)).first()
+            r.enabled = False
+            self.db.commit()
 
         @commands.check(self.admin_check)
         @self.bot.command(pass_context=True, no_pm=True)
