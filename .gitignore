@@ -2,3 +2,7 @@
 *.db
 zeitbot.bat
 zeitbot.sh
+adminbot.bat
+adminbot.sh
+*.bak*
+*.dev
